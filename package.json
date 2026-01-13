@@ -4,15 +4,15 @@
   "description": "Supplier-Project-Activity Tracking Desktop Application",
   "main": "dist-electron/main.js",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build && tsc -p tsconfig.electron.json",
-    "preview": "vite preview",
-    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "npm run build && electron-builder",
-    "type-check": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
-    "lint": "eslint src electron --ext .ts,.tsx",
-    "rebuild": "npm rebuild better-sqlite3 --build-from-source"
+    "scripts": {
+      "dev": "vite",
+      "build": "tsc && vite build && tsc -p tsconfig.electron.json",
+      "preview": "vite preview",
+      "electron:dev": "vite",
+      "electron:build": "npm run build && electron-builder",
+      "type-check": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+      "lint": "eslint src electron --ext .ts,.tsx",
+      "rebuild": "npm rebuild better-sqlite3 --build-from-source"
   },
   "keywords": [
     "electron",

@@ -1,10 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Plus, Edit, Trash2, Calendar, Flag } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, RefreshCcw, Edit2, Trash2, Calendar, Flag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import AddActivityDialog from './AddActivityDialog';
-import ScheduleItemDialog from './ScheduleItemDialog';
+import EditProjectScheduleItemDialog from './EditProjectScheduleItemDialog';
 import type { ProjectDetail, ProjectActivityDetail, ScheduleItemWithDates } from '../../../shared/types';
 
 export default function ProjectDetailPage() {
@@ -15,8 +23,13 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedActivities, setExpandedActivities] = useState<Set<number>>(new Set());
   const [addActivityDialogOpen, setAddActivityDialogOpen] = useState(false);
-  const [addScheduleItemDialogOpen, setAddScheduleItemDialogOpen] = useState(false);
-  const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
+  const [editScheduleItemDialogOpen, setEditScheduleItemDialogOpen] = useState(false);
+  const [selectedScheduleItem, setSelectedScheduleItem] = useState<ScheduleItemWithDates | null>(
+    null
+  );
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncActivityId, setSyncActivityId] = useState<number | null>(null);
+  const [applyTemplateOffsets, setApplyTemplateOffsets] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -52,9 +65,31 @@ export default function ProjectDetailPage() {
     setExpandedActivities(newExpanded);
   }
 
-  function handleAddScheduleItem(activityId: number) {
-    setSelectedActivityId(activityId);
-    setAddScheduleItemDialogOpen(true);
+  function handleEditScheduleItem(item: ScheduleItemWithDates) {
+    setSelectedScheduleItem(item);
+    setEditScheduleItemDialogOpen(true);
+  }
+
+  function openSyncDialog(activityId: number) {
+    setSyncActivityId(activityId);
+    setApplyTemplateOffsets(false);
+    setSyncDialogOpen(true);
+  }
+
+  async function handleSyncFromTemplate() {
+    if (!syncActivityId) {
+      return;
+    }
+    const response = await window.sqts.projectActivities.syncFromTemplate({
+      projectActivityId: syncActivityId,
+      applyTemplateOffsets,
+    });
+    if (response.success) {
+      setSyncDialogOpen(false);
+      loadProjectDetail();
+    } else {
+      alert(response.error || 'Failed to sync from template');
+    }
   }
 
   async function handleDeleteActivity(activityId: number) {
@@ -81,20 +116,6 @@ export default function ProjectDetailPage() {
     } else {
       alert(response.error || 'Failed to delete schedule item');
     }
-  }
-
-  function getAnchorDescription(item: ScheduleItemWithDates): string {
-    if (item.anchorType === 'FIXED_DATE') {
-      return `Fixed: ${item.fixedDate}`;
-    } else if (item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId) {
-      const offset = item.offsetDays || 0;
-      const sign = offset >= 0 ? '+' : '';
-      return `Ref Item ${item.anchorRefId} ${sign}${offset} days`;
-    } else if (item.anchorType === 'PROJECT_ANCHOR') {
-      const offset = item.offsetDays || 0;
-      return `Project anchor ${offset >= 0 ? '+' : ''}${offset} days`;
-    }
-    return item.anchorType;
   }
 
   if (loading) {
@@ -166,9 +187,10 @@ export default function ProjectDetailPage() {
               activity={activity}
               expanded={expandedActivities.has(activity.id)}
               onToggle={() => toggleActivity(activity.id)}
-              onAddScheduleItem={() => handleAddScheduleItem(activity.id)}
+              onSyncFromTemplate={() => openSyncDialog(activity.id)}
               onDeleteActivity={() => handleDeleteActivity(activity.id)}
               onDeleteScheduleItem={handleDeleteScheduleItem}
+              onEditScheduleItem={handleEditScheduleItem}
             />
           ))
         )}
@@ -182,12 +204,42 @@ export default function ProjectDetailPage() {
         onSuccess={loadProjectDetail}
       />
 
-      <ScheduleItemDialog
-        open={addScheduleItemDialogOpen}
-        onOpenChange={setAddScheduleItemDialogOpen}
-        activityId={selectedActivityId}
+      <EditProjectScheduleItemDialog
+        open={editScheduleItemDialogOpen}
+        onOpenChange={setEditScheduleItemDialogOpen}
+        item={selectedScheduleItem}
         onSuccess={loadProjectDetail}
       />
+
+      <Dialog open={syncDialogOpen} onOpenChange={setSyncDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Sync From Template</DialogTitle>
+            <DialogDescription>
+              Add any new schedule items from the activity template.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 py-2 text-sm">
+            <input
+              id="applyTemplateOffsets"
+              type="checkbox"
+              checked={applyTemplateOffsets}
+              onChange={(e) => setApplyTemplateOffsets(e.target.checked)}
+            />
+            <label htmlFor="applyTemplateOffsets">
+              Update anchor rules and offsets from the template (keeps project dates/overrides).
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSyncDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSyncFromTemplate}>
+              Sync
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -196,18 +248,20 @@ interface ActivityCardProps {
   activity: ProjectActivityDetail;
   expanded: boolean;
   onToggle: () => void;
-  onAddScheduleItem: () => void;
+  onSyncFromTemplate: () => void;
   onDeleteActivity: () => void;
   onDeleteScheduleItem: (id: number) => void;
+  onEditScheduleItem: (item: ScheduleItemWithDates) => void;
 }
 
 function ActivityCard({
   activity,
   expanded,
   onToggle,
-  onAddScheduleItem,
+  onSyncFromTemplate,
   onDeleteActivity,
   onDeleteScheduleItem,
+  onEditScheduleItem,
 }: ActivityCardProps) {
   return (
     <Card>
@@ -229,9 +283,9 @@ function ActivityCard({
             </div>
           </div>
           <div className="flex gap-2">
-            <Button onClick={onAddScheduleItem} size="sm" variant="outline">
-              <Plus className="h-4 w-4 mr-1" />
-              Add Item
+            <Button onClick={onSyncFromTemplate} size="sm" variant="outline">
+              <RefreshCcw className="h-4 w-4 mr-1" />
+              Sync From Template
             </Button>
             <Button onClick={onDeleteActivity} size="sm" variant="outline">
               <Trash2 className="h-4 w-4" />
@@ -245,10 +299,6 @@ function ActivityCard({
           {activity.scheduleItems.length === 0 ? (
             <div className="text-center text-gray-500 py-4">
               <p>No schedule items yet.</p>
-              <Button onClick={onAddScheduleItem} size="sm" className="mt-2">
-                <Plus className="h-4 w-4 mr-1" />
-                Add First Item
-              </Button>
             </div>
           ) : (
             <div className="space-y-2">
@@ -257,6 +307,7 @@ function ActivityCard({
                   key={item.id}
                   item={item}
                   onDelete={() => onDeleteScheduleItem(item.id)}
+                  onEdit={() => onEditScheduleItem(item)}
                 />
               ))}
             </div>
@@ -270,9 +321,10 @@ function ActivityCard({
 interface ScheduleItemRowProps {
   item: ScheduleItemWithDates;
   onDelete: () => void;
+  onEdit: () => void;
 }
 
-function ScheduleItemRow({ item, onDelete }: ScheduleItemRowProps) {
+function ScheduleItemRow({ item, onDelete, onEdit }: ScheduleItemRowProps) {
   const isMilestone = item.kind === 'MILESTONE';
 
   function getAnchorDescription(): string {
@@ -326,9 +378,14 @@ function ScheduleItemRow({ item, onDelete }: ScheduleItemRowProps) {
           </div>
         )}
 
-        <Button onClick={onDelete} size="sm" variant="ghost">
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button onClick={onEdit} size="sm" variant="ghost">
+            <Edit2 className="h-4 w-4" />
+          </Button>
+          <Button onClick={onDelete} size="sm" variant="ghost">
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );

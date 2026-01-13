@@ -34,6 +34,7 @@ export function ProjectsList() {
     name: '',
     version: '',
     defaultAnchorRule: '',
+    projectAnchorDate: '',
   });
 
   useEffect(() => {
@@ -51,7 +52,7 @@ export function ProjectsList() {
 
   function openCreateDialog() {
     setEditingProject(null);
-    setFormData({ name: '', version: '', defaultAnchorRule: '' });
+    setFormData({ name: '', version: '', defaultAnchorRule: '', projectAnchorDate: '' });
     setDialogOpen(true);
   }
 
@@ -61,6 +62,7 @@ export function ProjectsList() {
       name: project.name,
       version: project.version,
       defaultAnchorRule: project.defaultAnchorRule || '',
+      projectAnchorDate: project.projectAnchorDate || '',
     });
     setDialogOpen(true);
   }
@@ -78,8 +80,9 @@ export function ProjectsList() {
       const params: UpdateProjectParams = {
         id: editingProject.id,
         name: formData.name,
-        version: formData.version,
+        version: formData.version.trim() === '' ? undefined : formData.version,
         defaultAnchorRule: formData.defaultAnchorRule || undefined,
+        projectAnchorDate: formData.projectAnchorDate || undefined,
       };
       const response = await window.sqts.projects.update(params);
       if (response.success) {
@@ -140,18 +143,20 @@ export function ProjectsList() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>Anchor Rule</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
+              <TableHead>Name</TableHead>
+              <TableHead>Version</TableHead>
+              <TableHead>Anchor Rule</TableHead>
+              <TableHead>Project Anchor Date</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
             <TableBody>
               {projects.map((project) => (
                 <TableRow key={project.id}>
                   <TableCell className="font-medium">{project.name}</TableCell>
                   <TableCell>{project.version}</TableCell>
                   <TableCell>{project.defaultAnchorRule || '-'}</TableCell>
+                  <TableCell>{project.projectAnchorDate || '-'}</TableCell>
                   <TableCell className="text-right">
                     <Button
                       variant="ghost"
@@ -210,13 +215,12 @@ export function ProjectsList() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="version">Version *</Label>
+                <Label htmlFor="version">Version</Label>
                 <Input
                   id="version"
                   value={formData.version}
                   onChange={(e) => setFormData({ ...formData, version: e.target.value })}
-                  placeholder="e.g., v1, 2024-Q1"
-                  required
+                  placeholder="Auto-generated if blank (e.g., 2026-01-13)"
                 />
               </div>
               <div className="grid gap-2">
@@ -226,6 +230,17 @@ export function ProjectsList() {
                   value={formData.defaultAnchorRule}
                   onChange={(e) => setFormData({ ...formData, defaultAnchorRule: e.target.value })}
                   placeholder="Optional (Phase 2 feature)"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="projectAnchorDate">Project Anchor Date</Label>
+                <Input
+                  id="projectAnchorDate"
+                  type="date"
+                  value={formData.projectAnchorDate}
+                  onChange={(e) =>
+                    setFormData({ ...formData, projectAnchorDate: e.target.value })
+                  }
                 />
               </div>
             </div>

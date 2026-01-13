@@ -25,6 +25,7 @@ export interface Project {
   name: string;
   version: string;
   defaultAnchorRule: string | null;
+  projectAnchorDate: string | null;
   createdAt: string;
 }
 
@@ -52,12 +53,15 @@ export type AnchorType =
 export interface ProjectScheduleItem {
   id: number;
   projectActivityId: number;
+  templateItemId: number | null;
   kind: ScheduleItemKind;
   name: string;
   anchorType: AnchorType;
   anchorRefId: number | null;
   offsetDays: number | null;
   fixedDate: string | null;
+  overrideDate: string | null;
+  overrideEnabled: boolean;
   sortOrder: number;
   createdAt: string;
 }
@@ -104,6 +108,45 @@ export interface SupplierScheduleItemInstance {
   scopeOverride: ScopeOverride;
   locked: boolean;
   createdAt: string;
+}
+
+export interface ActivityTemplateScheduleItem {
+  id: number;
+  activityTemplateId: number;
+  kind: ScheduleItemKind;
+  name: string;
+  anchorType: AnchorType;
+  anchorRefId: number | null;
+  offsetDays: number | null;
+  createdAt: string;
+}
+
+export interface SupplierProjectSummary extends SupplierProject {
+  supplierName: string;
+  projectName: string;
+  projectAnchorDate: string | null;
+}
+
+export interface SupplierScheduleItemDetail extends ProjectScheduleItem {
+  supplierScheduleItemId: number;
+  plannedDate: string | null;
+  actualDate: string | null;
+  status: ActivityStatus;
+  plannedDateOverride: boolean;
+  scopeOverride: ScopeOverride;
+  locked: boolean;
+}
+
+export interface SupplierProjectActivityDetail extends SupplierActivityInstance {
+  activityTemplateName: string;
+  scheduleItems: SupplierScheduleItemDetail[];
+}
+
+export interface SupplierProjectDetail extends SupplierProject {
+  supplierName: string;
+  projectName: string;
+  projectAnchorDate: string | null;
+  activities: SupplierProjectActivityDetail[];
 }
 
 // ============================================================================
@@ -166,8 +209,9 @@ export interface UpdateActivityTemplateParams {
 // Project operations
 export interface CreateProjectParams {
   name: string;
-  version: string;
+  version?: string;
   defaultAnchorRule?: string;
+  projectAnchorDate?: string;
 }
 
 export interface UpdateProjectParams {
@@ -175,6 +219,7 @@ export interface UpdateProjectParams {
   name?: string;
   version?: string;
   defaultAnchorRule?: string;
+  projectAnchorDate?: string;
 }
 
 // Project Activity operations
@@ -197,8 +242,11 @@ export interface CreateScheduleItemParams {
   anchorType: AnchorType;
   anchorRefId?: number;
   offsetDays?: number;
-  fixedDate?: string; // YYYY-MM-DD
+  fixedDate?: string | null; // YYYY-MM-DD
   sortOrder?: number;
+  templateItemId?: number;
+  overrideDate?: string | null;
+  overrideEnabled?: boolean;
 }
 
 export interface UpdateScheduleItemParams {
@@ -207,8 +255,79 @@ export interface UpdateScheduleItemParams {
   anchorType?: AnchorType;
   anchorRefId?: number;
   offsetDays?: number;
-  fixedDate?: string; // YYYY-MM-DD
+  fixedDate?: string | null; // YYYY-MM-DD
   sortOrder?: number;
+  overrideDate?: string | null;
+  overrideEnabled?: boolean;
+}
+
+// Activity template schedule item operations
+export interface CreateActivityTemplateScheduleItemParams {
+  activityTemplateId: number;
+  kind: ScheduleItemKind;
+  name: string;
+  anchorType: AnchorType;
+  anchorRefId?: number;
+  offsetDays?: number;
+}
+
+export interface UpdateActivityTemplateScheduleItemParams {
+  id: number;
+  kind?: ScheduleItemKind;
+  name?: string;
+  anchorType?: AnchorType;
+  anchorRefId?: number;
+  offsetDays?: number;
+}
+
+export interface SyncProjectActivityFromTemplateParams {
+  projectActivityId: number;
+  applyTemplateOffsets?: boolean;
+}
+
+// Supplier Project operations
+export interface ApplySupplierProjectParams {
+  supplierId: number;
+  projectId: number;
+  supplierAnchorDate?: string;
+}
+
+export interface UpdateSupplierProjectParams {
+  id: number;
+  supplierAnchorDate?: string;
+}
+
+export interface UpdateSupplierActivityInstanceParams {
+  id: number;
+  status?: ActivityStatus;
+  scopeOverride?: ScopeOverride;
+}
+
+export interface UpdateSupplierScheduleItemInstanceParams {
+  id: number;
+  plannedDate?: string;
+  actualDate?: string;
+  status?: ActivityStatus;
+  plannedDateOverride?: boolean;
+  scopeOverride?: ScopeOverride;
+  locked?: boolean;
+}
+
+// Parts operations
+export interface CreatePartParams {
+  supplierProjectId: number;
+  partNumber: string;
+  description?: string;
+  paRank?: string;
+  notes?: string;
+}
+
+export interface UpdatePartParams {
+  id: number;
+  partNumber?: string;
+  description?: string;
+  paRank?: string;
+  notes?: string;
 }
 
 // Computed schedule results

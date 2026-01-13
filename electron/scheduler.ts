@@ -102,6 +102,10 @@ function calculatePlannedDate(
   projectAnchorDate?: string,
   supplierAnchorDate?: string
 ): string | null {
+  if (item.overrideEnabled && item.overrideDate) {
+    return item.overrideDate;
+  }
+
   switch (item.anchorType) {
     case 'FIXED_DATE':
       return item.fixedDate;

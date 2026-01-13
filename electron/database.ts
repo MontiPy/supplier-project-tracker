@@ -218,11 +218,12 @@ export function run(sql: string, params: any[] = []): { lastInsertRowid: number;
   }
 
   db.run(sql, params);
-  saveDatabase();
 
   // Get last insert rowid and changes
   const lastId = query<{ id: number }>('SELECT last_insert_rowid() as id')[0]?.id || 0;
   const changes = query<{ changes: number }>('SELECT changes() as changes')[0]?.changes || 0;
+
+  saveDatabase();
 
   return {
     lastInsertRowid: lastId,

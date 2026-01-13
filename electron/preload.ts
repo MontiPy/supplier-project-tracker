@@ -11,13 +11,29 @@ import type {
   UpdateActivityTemplateParams,
   CreateProjectParams,
   UpdateProjectParams,
+  ApplySupplierProjectParams,
+  UpdateSupplierProjectParams,
   CreateProjectActivityParams,
   UpdateProjectActivityParams,
   CreateScheduleItemParams,
   UpdateScheduleItemParams,
+  CreateActivityTemplateScheduleItemParams,
+  UpdateActivityTemplateScheduleItemParams,
+  SyncProjectActivityFromTemplateParams,
+  UpdateSupplierActivityInstanceParams,
+  UpdateSupplierScheduleItemInstanceParams,
   ProjectActivityDetail,
   ProjectDetail,
   ScheduleItemWithDates,
+  ActivityTemplateScheduleItem,
+  SupplierProject,
+  SupplierProjectDetail,
+  SupplierProjectSummary,
+  SupplierActivityInstance,
+  SupplierScheduleItemInstance,
+  Part,
+  CreatePartParams,
+  UpdatePartParams,
   APIResponse,
 } from '../shared/types.js';
 
@@ -54,6 +70,20 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('activity-templates:update', params),
     delete: (id: number): Promise<APIResponse<void>> =>
       ipcRenderer.invoke('activity-templates:delete', id),
+    scheduleItems: {
+      list: (activityTemplateId: number): Promise<APIResponse<ActivityTemplateScheduleItem[]>> =>
+        ipcRenderer.invoke('activity-template-schedule-items:list', activityTemplateId),
+      create: (
+        params: CreateActivityTemplateScheduleItemParams
+      ): Promise<APIResponse<ActivityTemplateScheduleItem>> =>
+        ipcRenderer.invoke('activity-template-schedule-items:create', params),
+      update: (
+        params: UpdateActivityTemplateScheduleItemParams
+      ): Promise<APIResponse<ActivityTemplateScheduleItem>> =>
+        ipcRenderer.invoke('activity-template-schedule-items:update', params),
+      delete: (id: number): Promise<APIResponse<void>> =>
+        ipcRenderer.invoke('activity-template-schedule-items:delete', id),
+    },
   },
 
   // Projects API
@@ -81,6 +111,10 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('project-activities:update', params),
     delete: (id: number): Promise<APIResponse<void>> =>
       ipcRenderer.invoke('project-activities:delete', id),
+    syncFromTemplate: (
+      params: SyncProjectActivityFromTemplateParams
+    ): Promise<APIResponse<ProjectActivity>> =>
+      ipcRenderer.invoke('project-activities:sync-from-template', params),
   },
 
   // Schedule Items API
@@ -95,6 +129,44 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('schedule-items:update', params),
     delete: (id: number): Promise<APIResponse<void>> =>
       ipcRenderer.invoke('schedule-items:delete', id),
+  },
+
+  supplierProjects: {
+    list: (): Promise<APIResponse<SupplierProjectSummary[]>> =>
+      ipcRenderer.invoke('supplier-projects:list'),
+    listBySupplier: (supplierId: number): Promise<APIResponse<SupplierProjectSummary[]>> =>
+      ipcRenderer.invoke('supplier-projects:list-by-supplier', supplierId),
+    getDetail: (id: number): Promise<APIResponse<SupplierProjectDetail>> =>
+      ipcRenderer.invoke('supplier-projects:get-detail', id),
+    apply: (params: ApplySupplierProjectParams): Promise<APIResponse<SupplierProject>> =>
+      ipcRenderer.invoke('supplier-projects:apply', params),
+    update: (params: UpdateSupplierProjectParams): Promise<APIResponse<SupplierProject>> =>
+      ipcRenderer.invoke('supplier-projects:update', params),
+  },
+
+  supplierActivityInstances: {
+    update: (
+      params: UpdateSupplierActivityInstanceParams
+    ): Promise<APIResponse<SupplierActivityInstance>> =>
+      ipcRenderer.invoke('supplier-activity-instances:update', params),
+  },
+
+  supplierScheduleItemInstances: {
+    update: (
+      params: UpdateSupplierScheduleItemInstanceParams
+    ): Promise<APIResponse<SupplierScheduleItemInstance>> =>
+      ipcRenderer.invoke('supplier-schedule-item-instances:update', params),
+  },
+
+  parts: {
+    list: (supplierProjectId: number): Promise<APIResponse<Part[]>> =>
+      ipcRenderer.invoke('parts:list', supplierProjectId),
+    create: (params: CreatePartParams): Promise<APIResponse<Part>> =>
+      ipcRenderer.invoke('parts:create', params),
+    update: (params: UpdatePartParams): Promise<APIResponse<Part>> =>
+      ipcRenderer.invoke('parts:update', params),
+    delete: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('parts:delete', id),
   },
 });
 
@@ -118,6 +190,16 @@ export interface SQTSAPI {
     create: (params: CreateActivityTemplateParams) => Promise<APIResponse<ActivityTemplate>>;
     update: (params: UpdateActivityTemplateParams) => Promise<APIResponse<ActivityTemplate>>;
     delete: (id: number) => Promise<APIResponse<void>>;
+    scheduleItems: {
+      list: (activityTemplateId: number) => Promise<APIResponse<ActivityTemplateScheduleItem[]>>;
+      create: (
+        params: CreateActivityTemplateScheduleItemParams
+      ) => Promise<APIResponse<ActivityTemplateScheduleItem>>;
+      update: (
+        params: UpdateActivityTemplateScheduleItemParams
+      ) => Promise<APIResponse<ActivityTemplateScheduleItem>>;
+      delete: (id: number) => Promise<APIResponse<void>>;
+    };
   };
   projects: {
     list: () => Promise<APIResponse<Project[]>>;
@@ -133,12 +215,38 @@ export interface SQTSAPI {
     create: (params: CreateProjectActivityParams) => Promise<APIResponse<ProjectActivity>>;
     update: (params: UpdateProjectActivityParams) => Promise<APIResponse<ProjectActivity>>;
     delete: (id: number) => Promise<APIResponse<void>>;
+    syncFromTemplate: (
+      params: SyncProjectActivityFromTemplateParams
+    ) => Promise<APIResponse<ProjectActivity>>;
   };
   scheduleItems: {
     list: (projectActivityId: number) => Promise<APIResponse<ScheduleItemWithDates[]>>;
     get: (id: number) => Promise<APIResponse<ProjectScheduleItem>>;
     create: (params: CreateScheduleItemParams) => Promise<APIResponse<ProjectScheduleItem>>;
     update: (params: UpdateScheduleItemParams) => Promise<APIResponse<ProjectScheduleItem>>;
+    delete: (id: number) => Promise<APIResponse<void>>;
+  };
+  supplierProjects: {
+    list: () => Promise<APIResponse<SupplierProjectSummary[]>>;
+    listBySupplier: (supplierId: number) => Promise<APIResponse<SupplierProjectSummary[]>>;
+    getDetail: (id: number) => Promise<APIResponse<SupplierProjectDetail>>;
+    apply: (params: ApplySupplierProjectParams) => Promise<APIResponse<SupplierProject>>;
+    update: (params: UpdateSupplierProjectParams) => Promise<APIResponse<SupplierProject>>;
+  };
+  supplierActivityInstances: {
+    update: (
+      params: UpdateSupplierActivityInstanceParams
+    ) => Promise<APIResponse<SupplierActivityInstance>>;
+  };
+  supplierScheduleItemInstances: {
+    update: (
+      params: UpdateSupplierScheduleItemInstanceParams
+    ) => Promise<APIResponse<SupplierScheduleItemInstance>>;
+  };
+  parts: {
+    list: (supplierProjectId: number) => Promise<APIResponse<Part[]>>;
+    create: (params: CreatePartParams) => Promise<APIResponse<Part>>;
+    update: (params: UpdatePartParams) => Promise<APIResponse<Part>>;
     delete: (id: number) => Promise<APIResponse<void>>;
   };
 }
