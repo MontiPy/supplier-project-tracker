@@ -1,0 +1,41 @@
+{
+  "appId": "com.supplier-tracking.app",
+  "productName": "Supplier Tracking",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist",
+    "dist-electron"
+  ],
+  "mac": {
+    "target": ["dmg"],
+    "artifactName": "${productName}-${version}-${os}.${ext}"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "artifactName": "${productName}-${version}-${os}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "linux": {
+    "target": ["AppImage"],
+    "artifactName": "${productName}-${version}-${os}.${ext}"
+  },
+  "extraResources": [
+    {
+      "from": "node_modules/better-sqlite3/build/Release/",
+      "to": "better-sqlite3",
+      "filter": ["**/*"]
+    }
+  ]
+}

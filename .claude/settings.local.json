@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(tasklist:*)",
+      "Bash(npx electron-rebuild)",
+      "Bash(npm run rebuild:*)",
+      "Bash(where:*)",
+      "Bash(npm config set:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(taskkill:*)",
+      "Bash(exit 0)",
+      "Bash(cmd //c \"tasklist | findstr /C:electron\")",
+      "Bash(ls:*)"
+    ]
+  }
+}
