@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Plus, RefreshCcw, Edit2, Trash2, Calendar, Flag } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, RefreshCcw, Edit2, Trash2, Calendar, Flag, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -13,6 +13,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import AddActivityDialog from './AddActivityDialog';
 import EditProjectScheduleItemDialog from './EditProjectScheduleItemDialog';
+import PropagationPreviewModal from './PropagationPreviewModal';
 import type { ProjectDetail, ProjectActivityDetail, ScheduleItemWithDates } from '../../../shared/types';
 
 export default function ProjectDetailPage() {
@@ -30,10 +31,13 @@ export default function ProjectDetailPage() {
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [syncActivityId, setSyncActivityId] = useState<number | null>(null);
   const [applyTemplateOffsets, setApplyTemplateOffsets] = useState(false);
+  const [propagationModalOpen, setPropagationModalOpen] = useState(false);
+  const [supplierCount, setSupplierCount] = useState<number>(0);
 
   useEffect(() => {
     if (id) {
       loadProjectDetail();
+      loadSupplierCount();
     }
   }, [id]);
 
@@ -105,6 +109,20 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function loadSupplierCount() {
+    if (!id) return;
+
+    try {
+      const response = await window.sqts.supplierProjects.list();
+      if (response.success && response.data) {
+        const projectSuppliers = response.data.filter(sp => sp.projectId === Number(id));
+        setSupplierCount(projectSuppliers.length);
+      }
+    } catch (error) {
+      console.error('Error loading supplier count:', error);
+    }
+  }
+
   async function handleDeleteScheduleItem(scheduleItemId: number) {
     if (!confirm('Are you sure you want to delete this schedule item?')) {
       return;
@@ -158,12 +176,23 @@ export default function ProjectDetailPage() {
             <Button onClick={() => navigate('/projects')} variant="outline">
               Back to Projects
             </Button>
+            {supplierCount > 0 && (
+              <Button onClick={() => setPropagationModalOpen(true)} variant="outline">
+                <Share2 className="h-4 w-4 mr-2" />
+                Propagate Changes ({supplierCount})
+              </Button>
+            )}
             <Button onClick={() => setAddActivityDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Add Activity
             </Button>
           </div>
         </div>
+        {supplierCount > 0 && (
+          <div className="mt-2 text-sm text-blue-600">
+            This project is applied to {supplierCount} supplier{supplierCount !== 1 ? 's' : ''}
+          </div>
+        )}
       </div>
 
       {/* Activities List */}
@@ -240,6 +269,16 @@ export default function ProjectDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <PropagationPreviewModal
+        open={propagationModalOpen}
+        onOpenChange={setPropagationModalOpen}
+        projectId={Number(id)}
+        onSuccess={() => {
+          loadProjectDetail();
+          loadSupplierCount();
+        }}
+      />
     </div>
   );
 }
