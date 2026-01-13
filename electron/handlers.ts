@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { query, queryOne, run, toCamelCase } from './database.js';
 import { calculateScheduleDates, validateScheduleItems } from './scheduler.js';
+import { previewPropagation, propagateChanges } from './engine/propagation.js';
 import type {
   Supplier,
   ActivityTemplate,
@@ -38,6 +39,10 @@ import type {
   Part,
   CreatePartParams,
   UpdatePartParams,
+  PropagationPreview,
+  PropagationResult,
+  AuditEvent,
+  AuditEventQuery,
   APIResponse,
 } from '../shared/types.js';
 
@@ -69,6 +74,42 @@ function getProjectAnchorDateForActivity(projectActivityId: number): string | nu
     [projectActivityId]
   );
   return result?.project_anchor_date ?? null;
+}
+
+// ============================================================================
+// Audit Logging Functions (Phase 4)
+// ============================================================================
+
+function createAuditEvent(
+  entityType: string,
+  entityId: number,
+  action: string,
+  payload: any
+): void {
+  try {
+    run(
+      `INSERT INTO audit_events (entity_type, entity_id, action, payload)
+       VALUES (?, ?, ?, ?)`,
+      [entityType, entityId, action, JSON.stringify(payload)]
+    );
+  } catch (error) {
+    console.error('Error creating audit event:', error);
+  }
+}
+
+function queryAuditLog(
+  entityType: string,
+  entityId: number,
+  limit: number = 50
+): AuditEvent[] {
+  const events = query(
+    `SELECT * FROM audit_events
+     WHERE entity_type = ? AND entity_id = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [entityType, entityId, limit]
+  );
+  return toCamelCase<AuditEvent[]>(events);
 }
 
 // ============================================================================
@@ -531,7 +572,7 @@ function handleProjectActivitiesGet(_event: any, id: number): APIResponse<Projec
     const projectAnchorDate = getProjectAnchorDateForActivity(id);
     const itemsWithDates = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-      projectAnchorDate
+      projectAnchorDate || undefined
     );
 
     const result: ProjectActivityDetail = {
@@ -570,41 +611,41 @@ function handleProjectActivitiesCreate(
       [projectId, activityTemplateId, finalSortOrder]
     );
 
-    const templateItems = query<ActivityTemplateScheduleItem>(
+    const templateItemsRaw = query(
       'SELECT * FROM activity_template_schedule_items WHERE activity_template_id = ? ORDER BY id',
       [activityTemplateId]
     );
 
     const projectItemIdByTemplateId = new Map<number, number>();
 
-    templateItems.forEach((templateItem, index) => {
+    templateItemsRaw.forEach((templateItemRaw: any, index) => {
       const projectItemResult = run(
         `INSERT INTO project_schedule_items
          (project_activity_id, template_item_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, sort_order)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           result.lastInsertRowid,
-          templateItem.id,
-          templateItem.kind,
-          templateItem.name,
-          templateItem.anchor_type,
+          templateItemRaw.id,
+          templateItemRaw.kind,
+          templateItemRaw.name,
+          templateItemRaw.anchor_type,
           null,
-          templateItem.offset_days,
+          templateItemRaw.offset_days,
           null,
           index,
         ]
       );
 
-      projectItemIdByTemplateId.set(templateItem.id, projectItemResult.lastInsertRowid);
+      projectItemIdByTemplateId.set(templateItemRaw.id, projectItemResult.lastInsertRowid);
     });
 
     // Second pass to wire anchor references
-    for (const templateItem of templateItems) {
-      if (!templateItem.anchor_ref_id) {
+    for (const templateItemRaw of templateItemsRaw) {
+      if (!templateItemRaw.anchor_ref_id) {
         continue;
       }
-      const projectItemId = projectItemIdByTemplateId.get(templateItem.id);
-      const anchorProjectItemId = projectItemIdByTemplateId.get(templateItem.anchor_ref_id);
+      const projectItemId = projectItemIdByTemplateId.get(templateItemRaw.id);
+      const anchorProjectItemId = projectItemIdByTemplateId.get(templateItemRaw.anchor_ref_id);
       if (projectItemId && anchorProjectItemId) {
         run('UPDATE project_schedule_items SET anchor_ref_id = ? WHERE id = ?', [
           anchorProjectItemId,
@@ -676,35 +717,35 @@ function handleProjectActivitiesSyncFromTemplate(
       return createErrorResponse(`Project activity not found: ${projectActivityId}`);
     }
 
-    const templateItems = query<ActivityTemplateScheduleItem>(
+    const templateItemsRaw = query(
       'SELECT * FROM activity_template_schedule_items WHERE activity_template_id = ? ORDER BY id',
       [activity.activity_template_id]
     );
 
-    const projectItems = query<ProjectScheduleItem>(
+    const projectItemsRaw = query(
       'SELECT * FROM project_schedule_items WHERE project_activity_id = ?',
       [projectActivityId]
     );
 
-    const projectItemByTemplateId = new Map<number, ProjectScheduleItem>();
-    for (const projectItem of projectItems) {
-      if (projectItem.template_item_id) {
-        projectItemByTemplateId.set(projectItem.template_item_id, projectItem);
+    const projectItemByTemplateId = new Map<number, any>();
+    for (const projectItemRaw of projectItemsRaw) {
+      if (projectItemRaw.template_item_id) {
+        projectItemByTemplateId.set(projectItemRaw.template_item_id, projectItemRaw);
       }
     }
 
     const projectItemIdByTemplateId = new Map<number, number>();
 
-    for (const projectItem of projectItems) {
-      if (projectItem.template_item_id) {
-        projectItemIdByTemplateId.set(projectItem.template_item_id, projectItem.id);
+    for (const projectItemRaw of projectItemsRaw) {
+      if (projectItemRaw.template_item_id) {
+        projectItemIdByTemplateId.set(projectItemRaw.template_item_id, projectItemRaw.id);
       }
     }
 
     const newlyCreatedTemplateIds = new Set<number>();
 
-    templateItems.forEach((templateItem) => {
-      const existing = projectItemByTemplateId.get(templateItem.id);
+    templateItemsRaw.forEach((templateItemRaw: any) => {
+      const existing = projectItemByTemplateId.get(templateItemRaw.id);
       if (!existing) {
         const insertResult = run(
           `INSERT INTO project_schedule_items
@@ -712,26 +753,26 @@ function handleProjectActivitiesSyncFromTemplate(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             projectActivityId,
-            templateItem.id,
-            templateItem.kind,
-            templateItem.name,
-            templateItem.anchor_type,
+            templateItemRaw.id,
+            templateItemRaw.kind,
+            templateItemRaw.name,
+            templateItemRaw.anchor_type,
             null,
-            templateItem.offset_days,
+            templateItemRaw.offset_days,
             null,
-            projectItems.length,
+            projectItemsRaw.length,
           ]
         );
-        projectItemIdByTemplateId.set(templateItem.id, insertResult.lastInsertRowid);
-        newlyCreatedTemplateIds.add(templateItem.id);
+        projectItemIdByTemplateId.set(templateItemRaw.id, insertResult.lastInsertRowid);
+        newlyCreatedTemplateIds.add(templateItemRaw.id);
       } else {
-        projectItemIdByTemplateId.set(templateItem.id, existing.id);
+        projectItemIdByTemplateId.set(templateItemRaw.id, existing.id);
       }
     });
 
     if (applyTemplateOffsets) {
-      for (const templateItem of templateItems) {
-        const projectItemId = projectItemIdByTemplateId.get(templateItem.id);
+      for (const templateItemRaw of templateItemsRaw) {
+        const projectItemId = projectItemIdByTemplateId.get(templateItemRaw.id);
         if (!projectItemId) {
           continue;
         }
@@ -740,24 +781,24 @@ function handleProjectActivitiesSyncFromTemplate(
            SET name = ?, kind = ?, anchor_type = ?, offset_days = ?
            WHERE id = ?`,
           [
-            templateItem.name,
-            templateItem.kind,
-            templateItem.anchor_type,
-            templateItem.offset_days,
+            templateItemRaw.name,
+            templateItemRaw.kind,
+            templateItemRaw.anchor_type,
+            templateItemRaw.offset_days,
             projectItemId,
           ]
         );
       }
     }
 
-    for (const templateItem of templateItems) {
-      if (!templateItem.anchor_ref_id) {
+    for (const templateItemRaw of templateItemsRaw) {
+      if (!templateItemRaw.anchor_ref_id) {
         continue;
       }
-      const projectItemId = projectItemIdByTemplateId.get(templateItem.id);
-      const anchorProjectItemId = projectItemIdByTemplateId.get(templateItem.anchor_ref_id);
+      const projectItemId = projectItemIdByTemplateId.get(templateItemRaw.id);
+      const anchorProjectItemId = projectItemIdByTemplateId.get(templateItemRaw.anchor_ref_id);
       const shouldUpdateAnchor =
-        newlyCreatedTemplateIds.has(templateItem.id) || applyTemplateOffsets;
+        newlyCreatedTemplateIds.has(templateItemRaw.id) || applyTemplateOffsets;
       if (projectItemId && anchorProjectItemId && shouldUpdateAnchor) {
         run('UPDATE project_schedule_items SET anchor_ref_id = ? WHERE id = ?', [
           anchorProjectItemId,
@@ -790,7 +831,7 @@ function handleScheduleItemsList(
     const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
     const itemsWithDates = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(items),
-      projectAnchorDate
+      projectAnchorDate || undefined
     );
 
     return createSuccessResponse(itemsWithDates);
@@ -1155,8 +1196,8 @@ function handleSupplierProjectsApply(
 
       const itemsWithDates = calculateScheduleDates(
         toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-        project.project_anchor_date ?? null,
-        supplierAnchorDate ?? null
+        project.project_anchor_date || undefined,
+        supplierAnchorDate || undefined
       );
 
       for (const item of itemsWithDates) {
@@ -1447,6 +1488,61 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 }
 
 // ============================================================================
+// Phase 4: Propagation + Audit Handlers
+// ============================================================================
+
+function handleProjectsPreviewPropagation(
+  _event: any,
+  projectId: number
+): APIResponse<PropagationPreview> {
+  try {
+    const preview = previewPropagation(projectId);
+    return createSuccessResponse(preview);
+  } catch (error) {
+    console.error('Error previewing propagation:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectsPropagateChanges(
+  _event: any,
+  projectId: number
+): APIResponse<PropagationResult> {
+  try {
+    const result = propagateChanges(projectId, false);
+
+    // Create audit event for the propagation
+    createAuditEvent('project', projectId, 'propagate', {
+      updated: result.updated.length,
+      skipped: result.skipped.length,
+      timestamp: new Date().toISOString(),
+    });
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error propagating changes:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleAuditList(
+  _event: any,
+  params: AuditEventQuery
+): APIResponse<AuditEvent[]> {
+  try {
+    const events = queryAuditLog(
+      params.entityType,
+      params.entityId,
+      params.limit
+    );
+    return createSuccessResponse(events);
+  } catch (error) {
+    console.error('Error listing audit events:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
 // Register All Handlers
 // ============================================================================
 
@@ -1525,6 +1621,11 @@ export function registerHandlers(): void {
   ipcMain.handle('parts:create', handlePartsCreate);
   ipcMain.handle('parts:update', handlePartsUpdate);
   ipcMain.handle('parts:delete', handlePartsDelete);
+
+  // Phase 4: Propagation + Audit
+  ipcMain.handle('projects:preview-propagation', handleProjectsPreviewPropagation);
+  ipcMain.handle('projects:propagate-changes', handleProjectsPropagateChanges);
+  ipcMain.handle('audit:list', handleAuditList);
 
   console.log('✓ All IPC handlers registered');
 }

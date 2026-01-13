@@ -345,6 +345,43 @@ export interface ProjectDetail extends Project {
   activities: ProjectActivityDetail[];
 }
 
+// ============================================================================
+// Phase 4: Propagation Engine + Overrides
+// ============================================================================
+
+// Propagation preview and results
+export interface PropagationChange {
+  supplierScheduleItemInstanceId: number;
+  supplierName: string;
+  projectName: string;
+  activityName: string;
+  scheduleItemName: string;
+  currentPlannedDate: string | null;
+  newPlannedDate: string | null;
+  reason?: string; // why it won't change (locked, overridden, etc.)
+}
+
+export interface PropagationPreview {
+  projectId: number;
+  projectName: string;
+  supplierCount: number;
+  willChange: PropagationChange[];
+  wontChange: PropagationChange[];
+}
+
+export interface PropagationResult {
+  updated: PropagationChange[];
+  skipped: PropagationChange[];
+  errors: string[];
+}
+
+// Audit log query
+export interface AuditEventQuery {
+  entityType: string;
+  entityId: number;
+  limit?: number;
+}
+
 // Generic API Response
 export interface APIResponse<T = any> {
   success: boolean;

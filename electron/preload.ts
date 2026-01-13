@@ -34,6 +34,10 @@ import type {
   Part,
   CreatePartParams,
   UpdatePartParams,
+  PropagationPreview,
+  PropagationResult,
+  AuditEvent,
+  AuditEventQuery,
   APIResponse,
 } from '../shared/types.js';
 
@@ -97,6 +101,10 @@ contextBridge.exposeInMainWorld('sqts', {
     update: (params: UpdateProjectParams): Promise<APIResponse<Project>> =>
       ipcRenderer.invoke('projects:update', params),
     delete: (id: number): Promise<APIResponse<void>> => ipcRenderer.invoke('projects:delete', id),
+    previewPropagation: (projectId: number): Promise<APIResponse<PropagationPreview>> =>
+      ipcRenderer.invoke('projects:preview-propagation', projectId),
+    propagateChanges: (projectId: number): Promise<APIResponse<PropagationResult>> =>
+      ipcRenderer.invoke('projects:propagate-changes', projectId),
   },
 
   // Project Activities API
@@ -168,6 +176,12 @@ contextBridge.exposeInMainWorld('sqts', {
     delete: (id: number): Promise<APIResponse<void>> =>
       ipcRenderer.invoke('parts:delete', id),
   },
+
+  // Audit API (Phase 4)
+  audit: {
+    list: (params: AuditEventQuery): Promise<APIResponse<AuditEvent[]>> =>
+      ipcRenderer.invoke('audit:list', params),
+  },
 });
 
 // Type definition for TypeScript support
@@ -208,6 +222,8 @@ export interface SQTSAPI {
     create: (params: CreateProjectParams) => Promise<APIResponse<Project>>;
     update: (params: UpdateProjectParams) => Promise<APIResponse<Project>>;
     delete: (id: number) => Promise<APIResponse<void>>;
+    previewPropagation: (projectId: number) => Promise<APIResponse<PropagationPreview>>;
+    propagateChanges: (projectId: number) => Promise<APIResponse<PropagationResult>>;
   };
   projectActivities: {
     list: (projectId: number) => Promise<APIResponse<ProjectActivity[]>>;
@@ -248,6 +264,9 @@ export interface SQTSAPI {
     create: (params: CreatePartParams) => Promise<APIResponse<Part>>;
     update: (params: UpdatePartParams) => Promise<APIResponse<Part>>;
     delete: (id: number) => Promise<APIResponse<void>>;
+  };
+  audit: {
+    list: (params: AuditEventQuery) => Promise<APIResponse<AuditEvent[]>>;
   };
 }
 
