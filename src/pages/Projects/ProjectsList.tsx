@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -21,16 +21,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { VersionBadge } from '@/components/ui/status-badge';
-import type { ProjectWithStats, CreateProjectParams, UpdateProjectParams } from '@shared/types';
+import type { ProjectWithStats, CreateProjectParams } from '@shared/types';
 
 export function ProjectsList() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [editingProject, setEditingProject] = useState<ProjectWithStats | null>(null);
-  const [deletingProject, setDeletingProject] = useState<ProjectWithStats | null>(null);
   const [formData, setFormData] = useState<CreateProjectParams>({
     name: '',
     version: '',
@@ -52,64 +49,17 @@ export function ProjectsList() {
   }
 
   function openCreateDialog() {
-    setEditingProject(null);
     setFormData({ name: '', version: '', defaultAnchorRule: '', projectAnchorDate: '' });
     setDialogOpen(true);
-  }
-
-  function openEditDialog(project: ProjectWithStats, e: React.MouseEvent) {
-    e.stopPropagation();
-    setEditingProject(project);
-    setFormData({
-      name: project.name,
-      version: project.version,
-      defaultAnchorRule: project.defaultAnchorRule || '',
-      projectAnchorDate: project.projectAnchorDate || '',
-    });
-    setDialogOpen(true);
-  }
-
-  function openDeleteDialog(project: ProjectWithStats, e: React.MouseEvent) {
-    e.stopPropagation();
-    setDeletingProject(project);
-    setDeleteDialogOpen(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (editingProject) {
-      // Update
-      const params: UpdateProjectParams = {
-        id: editingProject.id,
-        name: formData.name,
-        version: (formData.version || '').trim() === '' ? undefined : formData.version,
-        defaultAnchorRule: formData.defaultAnchorRule || undefined,
-        projectAnchorDate: formData.projectAnchorDate || undefined,
-      };
-      const response = await window.sqts.projects.update(params);
-      if (response.success) {
-        await loadProjects();
-        setDialogOpen(false);
-      }
-    } else {
-      // Create
-      const response = await window.sqts.projects.create(formData);
-      if (response.success) {
-        await loadProjects();
-        setDialogOpen(false);
-      }
-    }
-  }
-
-  async function handleDelete() {
-    if (deletingProject) {
-      const response = await window.sqts.projects.delete(deletingProject.id);
-      if (response.success) {
-        await loadProjects();
-        setDeleteDialogOpen(false);
-        setDeletingProject(null);
-      }
+    const response = await window.sqts.projects.create(formData);
+    if (response.success) {
+      await loadProjects();
+      setDialogOpen(false);
     }
   }
 
@@ -132,7 +82,7 @@ export function ProjectsList() {
         </div>
         <Button onClick={openCreateDialog}>
           <Plus className="mr-2 h-4 w-4" />
-          Add Project
+          New Project
         </Button>
       </div>
 
@@ -148,7 +98,7 @@ export function ProjectsList() {
           </p>
           <Button onClick={openCreateDialog}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Project
+            New Project
           </Button>
         </div>
       ) : (
@@ -191,20 +141,6 @@ export function ProjectsList() {
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => openEditDialog(project, e)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => openDeleteDialog(project, e)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                      <Button
                         variant="outline"
                         size="sm"
                         onClick={(e) => {
@@ -228,12 +164,10 @@ export function ProjectsList() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingProject ? 'Edit Project' : 'Create Project'}
+              New Project
             </DialogTitle>
             <DialogDescription>
-              {editingProject
-                ? 'Update project information'
-                : 'Add a new project template'}
+              Add a new project template
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit}>
@@ -273,31 +207,10 @@ export function ProjectsList() {
                 Cancel
               </Button>
               <Button type="submit">
-                {editingProject ? 'Save Changes' : 'Create Project'}
+                Create Project
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Project</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete "{deletingProject?.name} {deletingProject?.version}"?
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDelete}>
-              Delete
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

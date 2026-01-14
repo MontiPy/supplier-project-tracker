@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -41,6 +42,44 @@ const anchorTypes: AnchorType[] = [
   'SCHEDULE_ITEM',
   'COMPLETION',
 ];
+
+function validateScheduleItems(items: ActivityTemplateScheduleItem[]): string[] {
+  const errors: string[] = [];
+  const graph = new Map<number, number | null>();
+
+  for (const item of items) {
+    if (item.anchorType === 'SCHEDULE_ITEM') {
+      if (!item.anchorRefId) {
+        errors.push(`Schedule item "${item.name}" is missing an anchor reference`);
+      }
+      if (item.anchorRefId === item.id) {
+        errors.push(`Schedule item "${item.name}" references itself`);
+      }
+      graph.set(item.id, item.anchorRefId || null);
+    } else {
+      graph.set(item.id, null);
+    }
+  }
+
+  for (const startItem of items) {
+    if (startItem.anchorType !== 'SCHEDULE_ITEM') {
+      continue;
+    }
+    const visited = new Set<number>();
+    let current: number | null = startItem.id;
+
+    while (current !== null) {
+      if (visited.has(current)) {
+        errors.push(`Circular dependency detected starting at "${startItem.name}"`);
+        break;
+      }
+      visited.add(current);
+      current = graph.get(current) ?? null;
+    }
+  }
+
+  return errors;
+}
 
 export function ActivityLibraryPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -210,6 +249,15 @@ export function ActivityLibraryPage() {
       await loadTemplates();
       selectTemplate(response.data.id);
     }
+  }
+
+  function handleValidate() {
+    const errors = validateScheduleItems(items);
+    if (errors.length > 0) {
+      alert(`Validation failed:\n- ${errors.join('\n- ')}`);
+      return;
+    }
+    alert('Validation passed. No issues found.');
   }
 
   // Schedule Item CRUD
@@ -470,198 +518,235 @@ export function ActivityLibraryPage() {
               </div>
             </div>
 
-            {/* Info Banner */}
-            <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 mb-6">
-              <Info className="h-4 w-4 flex-shrink-0" />
-              <div>
-                This template defines structure and offset rules. Milestones anchored to project
-                dates are set at the project level, and tasks inherit dates from milestones.
-              </div>
-            </div>
+            <Tabs defaultValue="schedule">
+              <TabsList className="mb-6">
+                <TabsTrigger value="schedule">Schedule Templates</TabsTrigger>
+                <TabsTrigger value="applicability">Applicability Rules</TabsTrigger>
+                <TabsTrigger value="metadata">Metadata</TabsTrigger>
+              </TabsList>
 
-            {/* Actions */}
-            <div className="flex items-center justify-end gap-2 mb-4">
-              <Button variant="outline" size="sm" onClick={openCreateItemDialog}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Milestone
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openCreateTaskDialog()}
-                disabled={milestones.length === 0}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add Task
-              </Button>
-            </div>
+              <TabsContent value="schedule">
+                {/* Info Banner */}
+                <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 mb-6">
+                  <Info className="h-4 w-4 flex-shrink-0" />
+                  <div>
+                    This template defines structure and offset rules. Milestones anchored to project
+                    dates are set at the project level, and tasks inherit dates from milestones.
+                  </div>
+                </div>
 
-            {/* Schedule Items Table */}
-            {items.length === 0 ? (
-              <Card>
-                <CardContent className="py-12">
-                  <div className="text-center">
-                    <p className="text-lg font-medium">No schedule items yet</p>
-                    <p className="text-sm text-muted-foreground mb-4">
-                      Add milestones and tasks for this activity template.
-                    </p>
-                    <Button onClick={openCreateItemDialog}>
+                {/* Actions */}
+                <div className="flex items-center justify-between gap-2 mb-4">
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={openCreateItemDialog}>
                       <Plus className="mr-2 h-4 w-4" />
                       Add Milestone
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openCreateTaskDialog()}
+                      disabled={milestones.length === 0}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Task
+                    </Button>
                   </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">Sort</TableHead>
-                      <TableHead className="w-16">Type</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Anchor Type</TableHead>
-                      <TableHead>Anchor Ref</TableHead>
-                      <TableHead>Offset Days</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(() => {
-                      let rowIndex = 0;
-                      return (
-                        <>
-                          {milestones.map((milestone) => (
-                            <Fragment key={milestone.id}>
-                              {(() => {
-                                rowIndex += 1;
-                                return (
-                                  <TableRow>
-                                    <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
-                                    <TableCell>
-                                      <TypeBadge kind="MILESTONE" />
-                                    </TableCell>
-                                    <TableCell className="font-medium">{milestone.name}</TableCell>
-                                    <TableCell>{formatAnchorType(milestone.anchorType)}</TableCell>
-                                    <TableCell>{getAnchorRefLabel(milestone)}</TableCell>
-                                    <TableCell>{getOffsetLabel(milestone)}</TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                      {getNotes(milestone)}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => openCreateTaskDialog(milestone.id)}
-                                      >
-                                        <Plus className="mr-1 h-3 w-3" />
-                                        Task
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => openEditItemDialog(milestone)}
-                                      >
-                                        <Pencil className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => openDeleteItemDialog(milestone)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })()}
-                              {(tasksByMilestone.get(milestone.id) || []).map((task) => {
-                                rowIndex += 1;
-                                return (
-                                  <TableRow key={task.id}>
-                                    <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
-                                    <TableCell>
-                                      <TypeBadge kind="TASK" />
-                                    </TableCell>
-                                    <TableCell className="pl-8 font-medium">{task.name}</TableCell>
-                                    <TableCell>{formatAnchorType(task.anchorType)}</TableCell>
-                                    <TableCell>{getAnchorRefLabel(task)}</TableCell>
-                                    <TableCell>{getOffsetLabel(task)}</TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                      {getNotes(task)}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => openEditItemDialog(task)}
-                                      >
-                                        <Pencil className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => openDeleteItemDialog(task)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                            </Fragment>
-                          ))}
-                          {ungroupedTasks.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={handleValidate}>
+                    Validate
+                  </Button>
+                </div>
+
+                {/* Schedule Items Table */}
+                {items.length === 0 ? (
+                  <Card>
+                    <CardContent className="py-12">
+                      <div className="text-center">
+                        <p className="text-lg font-medium">No schedule items yet</p>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          Add milestones and tasks for this activity template.
+                        </p>
+                        <Button onClick={openCreateItemDialog}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add Milestone
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">Sort</TableHead>
+                          <TableHead className="w-16">Type</TableHead>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Anchor Type</TableHead>
+                          <TableHead>Anchor Ref</TableHead>
+                          <TableHead>Offset Days</TableHead>
+                          <TableHead>Notes</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(() => {
+                          let rowIndex = 0;
+                          return (
                             <>
-                              <TableRow>
-                                <TableCell colSpan={8} className="text-xs uppercase text-muted-foreground bg-muted/50">
-                                  Ungrouped Tasks
-                                </TableCell>
-                              </TableRow>
-                              {ungroupedTasks.map((task) => {
-                                rowIndex += 1;
-                                return (
-                                  <TableRow key={task.id}>
-                                    <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
-                                    <TableCell>
-                                      <TypeBadge kind="TASK" />
-                                    </TableCell>
-                                    <TableCell className="font-medium">{task.name}</TableCell>
-                                    <TableCell>{formatAnchorType(task.anchorType)}</TableCell>
-                                    <TableCell>{getAnchorRefLabel(task)}</TableCell>
-                                    <TableCell>{getOffsetLabel(task)}</TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                      {getNotes(task)}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => openEditItemDialog(task)}
-                                      >
-                                        <Pencil className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => openDeleteItemDialog(task)}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
+                              {milestones.map((milestone) => (
+                                <Fragment key={milestone.id}>
+                                  {(() => {
+                                    rowIndex += 1;
+                                    return (
+                                      <TableRow>
+                                        <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
+                                        <TableCell>
+                                          <TypeBadge kind="MILESTONE" />
+                                        </TableCell>
+                                        <TableCell className="font-medium">{milestone.name}</TableCell>
+                                        <TableCell>{formatAnchorType(milestone.anchorType)}</TableCell>
+                                        <TableCell>{getAnchorRefLabel(milestone)}</TableCell>
+                                        <TableCell>{getOffsetLabel(milestone)}</TableCell>
+                                        <TableCell className="text-muted-foreground">
+                                          {getNotes(milestone)}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => openCreateTaskDialog(milestone.id)}
+                                          >
+                                            <Plus className="mr-1 h-3 w-3" />
+                                            Task
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => openEditItemDialog(milestone)}
+                                          >
+                                            <Pencil className="h-4 w-4" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => openDeleteItemDialog(milestone)}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })()}
+                                  {(tasksByMilestone.get(milestone.id) || []).map((task) => {
+                                    rowIndex += 1;
+                                    return (
+                                      <TableRow key={task.id}>
+                                        <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
+                                        <TableCell>
+                                          <TypeBadge kind="TASK" />
+                                        </TableCell>
+                                        <TableCell className="pl-8 font-medium">{task.name}</TableCell>
+                                        <TableCell>{formatAnchorType(task.anchorType)}</TableCell>
+                                        <TableCell>{getAnchorRefLabel(task)}</TableCell>
+                                        <TableCell>{getOffsetLabel(task)}</TableCell>
+                                        <TableCell className="text-muted-foreground">
+                                          {getNotes(task)}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => openEditItemDialog(task)}
+                                          >
+                                            <Pencil className="h-4 w-4" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => openDeleteItemDialog(task)}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
+                                </Fragment>
+                              ))}
+                              {ungroupedTasks.length > 0 && (
+                                <>
+                                  <TableRow>
+                                    <TableCell colSpan={8} className="text-xs uppercase text-muted-foreground bg-muted/50">
+                                      Ungrouped Tasks
                                     </TableCell>
                                   </TableRow>
-                                );
-                              })}
+                                  {ungroupedTasks.map((task) => {
+                                    rowIndex += 1;
+                                    return (
+                                      <TableRow key={task.id}>
+                                        <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
+                                        <TableCell>
+                                          <TypeBadge kind="TASK" />
+                                        </TableCell>
+                                        <TableCell className="font-medium">{task.name}</TableCell>
+                                        <TableCell>{formatAnchorType(task.anchorType)}</TableCell>
+                                        <TableCell>{getAnchorRefLabel(task)}</TableCell>
+                                        <TableCell>{getOffsetLabel(task)}</TableCell>
+                                        <TableCell className="text-muted-foreground">
+                                          {getNotes(task)}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => openEditItemDialog(task)}
+                                          >
+                                            <Pencil className="h-4 w-4" />
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() => openDeleteItemDialog(task)}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </Button>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
+                                </>
+                              )}
                             </>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+                          );
+                        })()}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="applicability">
+                <Card>
+                  <CardContent className="py-12">
+                    <div className="text-center text-muted-foreground">
+                      <p className="text-lg font-medium mb-2">Applicability Rules</p>
+                      <p>Define which suppliers and parts require this template.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="metadata">
+                <Card>
+                  <CardContent className="py-12">
+                    <div className="text-center text-muted-foreground">
+                      <p className="text-lg font-medium mb-2">Metadata</p>
+                      <p>Track ownership, tags, and lifecycle metadata for this template.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           </div>
         )}
       </div>

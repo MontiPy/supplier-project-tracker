@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Lock, LockOpen, Info } from 'lucide-react';
+import { ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -27,6 +27,16 @@ import type {
   SupplierScheduleItemDetail,
   SupplierProject,
 } from '@shared/types';
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '-';
+  const date = new Date(`${dateStr}T00:00:00`);
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
 
 export function SupplierProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -114,7 +124,7 @@ export function SupplierProjectDetailPage() {
       total,
       complete,
       overdue,
-      nextDue: nextDueItem?.plannedDate || '-',
+      nextDue: nextDueItem?.plannedDate || null,
       progressPercent,
       statusLabel: overdue > 0 ? 'At Risk' : progressPercent === 100 ? 'Complete' : 'On Track',
     };
@@ -139,11 +149,11 @@ export function SupplierProjectDetailPage() {
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <RankBadge rank={detail.nmrRank || null} />
-              {detail.nmrRank && <span>•</span>}
+              {detail.nmrRank && <span>|</span>}
               <span>Supplier: {detail.supplierName}</span>
               {detail.activities[0]?.activityTemplateName && (
                 <>
-                  <span>•</span>
+                  <span>|</span>
                   <span>Activity: {detail.activities[0].activityTemplateName}</span>
                 </>
               )}
@@ -198,7 +208,7 @@ export function SupplierProjectDetailPage() {
         <div className="h-6 w-px bg-border" />
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Next Due:</span>
-          <span className="text-sm font-medium">{summary.nextDue}</span>
+          <span className="text-sm font-medium">{formatDate(summary.nextDue)}</span>
         </div>
         <div className="h-6 w-px bg-border" />
         <StatusBadge status={summary.statusLabel} size="sm" />
@@ -391,60 +401,15 @@ interface SupplierScheduleItemRowProps {
 }
 
 function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProps) {
-  const [locked, setLocked] = useState(item.locked || false);
-  const [plannedDateOverride, setPlannedDateOverride] = useState(item.plannedDateOverride || false);
   const [actualDate, setActualDate] = useState(item.actualDate || '');
   const [status, setStatus] = useState(item.status);
 
   useEffect(() => {
-    setLocked(item.locked || false);
-    setPlannedDateOverride(item.plannedDateOverride || false);
     setActualDate(item.actualDate || '');
     setStatus(item.status);
-  }, [item.id, item.locked, item.plannedDateOverride, item.actualDate, item.status]);
+  }, [item.id, item.actualDate, item.status]);
 
-  async function handleToggleLock() {
-    const newLocked = !locked;
-    const response = await window.sqts.supplierScheduleItemInstances.update({
-      id: item.id,
-      locked: newLocked,
-    });
-
-    if (response.success) {
-      setLocked(newLocked);
-      onUpdate();
-    } else {
-      alert(response.error || 'Failed to update lock status');
-    }
-  }
-
-  async function handleToggleOverride() {
-    const newOverride = !plannedDateOverride;
-    const response = await window.sqts.supplierScheduleItemInstances.update({
-      id: item.id,
-      plannedDateOverride: newOverride,
-    });
-
-    if (response.success) {
-      setPlannedDateOverride(newOverride);
-      onUpdate();
-    } else {
-      alert(response.error || 'Failed to update override status');
-    }
-  }
-
-  async function handleStatusChange(nextStatus: SupplierScheduleItemDetail['status']) {
-    const response = await window.sqts.supplierScheduleItemInstances.update({
-      id: item.id,
-      status: nextStatus,
-    });
-    if (response.success) {
-      setStatus(nextStatus);
-      onUpdate();
-    } else {
-      alert(response.error || 'Failed to update status');
-    }
-  }
+  const locked = item.locked || false;
 
   async function handleActualDateCommit(nextDate: string) {
     const response = await window.sqts.supplierScheduleItemInstances.update({
@@ -479,12 +444,12 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
   }
 
   return (
-    <TableRow className={locked ? 'bg-muted/50' : undefined}>
+    <TableRow>
       <TableCell>
         <TypeBadge kind={item.kind} />
       </TableCell>
       <TableCell className="font-medium">{item.name}</TableCell>
-      <TableCell>{item.plannedDate || '-'}</TableCell>
+      <TableCell>{formatDate(item.plannedDate)}</TableCell>
       <TableCell>
         <Input
           type="date"
@@ -498,18 +463,7 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
       <TableCell>
         <StatusBadge status={status} size="sm" />
       </TableCell>
-      <TableCell>
-        <div className="flex flex-wrap gap-1">
-          {locked && (
-            <span className="rounded bg-red-100 px-2 py-1 text-xs text-red-700">Locked</span>
-          )}
-          {plannedDateOverride && (
-            <span className="rounded bg-blue-100 px-2 py-1 text-xs text-blue-700">
-              Override
-            </span>
-          )}
-        </div>
-      </TableCell>
+      <TableCell />
       <TableCell className="text-right">
         <div className="flex items-center justify-end gap-2">
           {status !== 'Complete' && (
@@ -517,45 +471,10 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
               Complete
             </Button>
           )}
-          <select
-            className="h-8 rounded-md border bg-transparent px-2 text-xs"
-            value={status}
-            onChange={(e) => handleStatusChange(e.target.value as SupplierScheduleItemDetail['status'])}
-            disabled={locked}
-          >
-            <option value="Not Started">Not Started</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Blocked">Blocked</option>
-            <option value="Complete">Complete</option>
-            <option value="Not Required">Not Required</option>
-          </select>
-          <div className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              id={`override-${item.id}`}
-              checked={plannedDateOverride}
-              onChange={handleToggleOverride}
-              className="cursor-pointer"
-              disabled={locked}
-            />
-            <label htmlFor={`override-${item.id}`} className="text-xs text-muted-foreground">
-              Override
-            </label>
-          </div>
-          <Button
-            onClick={handleToggleLock}
-            size="sm"
-            variant="ghost"
-            title={locked ? "Unlock item" : "Lock item"}
-          >
-            {locked ? (
-              <Lock className="h-4 w-4 text-red-500" />
-            ) : (
-              <LockOpen className="h-4 w-4 text-muted-foreground" />
-            )}
-          </Button>
         </div>
       </TableCell>
     </TableRow>
   );
 }
+
+

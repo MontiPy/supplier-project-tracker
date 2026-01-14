@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,16 +21,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { RankBadge, StatusBadge } from '@/components/ui/status-badge';
-import type { SupplierWithStats, CreateSupplierParams, UpdateSupplierParams } from '@shared/types';
+import type { SupplierWithStats, CreateSupplierParams } from '@shared/types';
 
 export function SuppliersList() {
   const navigate = useNavigate();
   const [suppliers, setSuppliers] = useState<SupplierWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<SupplierWithStats | null>(null);
-  const [deletingSupplier, setDeletingSupplier] = useState<SupplierWithStats | null>(null);
   const [formData, setFormData] = useState<CreateSupplierParams>({
     name: '',
     nmrRank: '',
@@ -51,62 +48,17 @@ export function SuppliersList() {
   }
 
   function openCreateDialog() {
-    setEditingSupplier(null);
     setFormData({ name: '', nmrRank: '', notes: '' });
     setDialogOpen(true);
-  }
-
-  function openEditDialog(supplier: SupplierWithStats, e: React.MouseEvent) {
-    e.stopPropagation();
-    setEditingSupplier(supplier);
-    setFormData({
-      name: supplier.name,
-      nmrRank: supplier.nmrRank || '',
-      notes: supplier.notes || '',
-    });
-    setDialogOpen(true);
-  }
-
-  function openDeleteDialog(supplier: SupplierWithStats, e: React.MouseEvent) {
-    e.stopPropagation();
-    setDeletingSupplier(supplier);
-    setDeleteDialogOpen(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (editingSupplier) {
-      // Update
-      const params: UpdateSupplierParams = {
-        id: editingSupplier.id,
-        name: formData.name,
-        nmrRank: formData.nmrRank || undefined,
-        notes: formData.notes || undefined,
-      };
-      const response = await window.sqts.suppliers.update(params);
-      if (response.success) {
-        await loadSuppliers();
-        setDialogOpen(false);
-      }
-    } else {
-      // Create
-      const response = await window.sqts.suppliers.create(formData);
-      if (response.success) {
-        await loadSuppliers();
-        setDialogOpen(false);
-      }
-    }
-  }
-
-  async function handleDelete() {
-    if (deletingSupplier) {
-      const response = await window.sqts.suppliers.delete(deletingSupplier.id);
-      if (response.success) {
-        await loadSuppliers();
-        setDeleteDialogOpen(false);
-        setDeletingSupplier(null);
-      }
+    const response = await window.sqts.suppliers.create(formData);
+    if (response.success) {
+      await loadSuppliers();
+      setDialogOpen(false);
     }
   }
 
@@ -125,7 +77,7 @@ export function SuppliersList() {
         </div>
         <Button onClick={openCreateDialog}>
           <Plus className="mr-2 h-4 w-4" />
-          Add Supplier
+          New Supplier
         </Button>
       </div>
 
@@ -141,7 +93,7 @@ export function SuppliersList() {
           </p>
           <Button onClick={openCreateDialog}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Supplier
+            New Supplier
           </Button>
         </div>
       ) : (
@@ -190,20 +142,6 @@ export function SuppliersList() {
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => openEditDialog(supplier, e)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => openDeleteDialog(supplier, e)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                      <Button
                         variant="outline"
                         size="sm"
                         onClick={(e) => {
@@ -227,12 +165,10 @@ export function SuppliersList() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {editingSupplier ? 'Edit Supplier' : 'Create Supplier'}
+              New Supplier
             </DialogTitle>
             <DialogDescription>
-              {editingSupplier
-                ? 'Update supplier information'
-                : 'Add a new supplier to your database'}
+              Add a new supplier to your database
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit}>
@@ -270,31 +206,10 @@ export function SuppliersList() {
                 Cancel
               </Button>
               <Button type="submit">
-                {editingSupplier ? 'Save Changes' : 'Create Supplier'}
+                Create Supplier
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Supplier</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete "{deletingSupplier?.name}"? This action cannot be
-              undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDelete}>
-              Delete
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
