@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Eye } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,16 +20,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { Supplier, CreateSupplierParams, UpdateSupplierParams } from '@shared/types';
+import { RankBadge, StatusBadge } from '@/components/ui/status-badge';
+import type { SupplierWithStats, CreateSupplierParams, UpdateSupplierParams } from '@shared/types';
 
 export function SuppliersList() {
   const navigate = useNavigate();
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
-  const [deletingSupplier, setDeletingSupplier] = useState<Supplier | null>(null);
+  const [editingSupplier, setEditingSupplier] = useState<SupplierWithStats | null>(null);
+  const [deletingSupplier, setDeletingSupplier] = useState<SupplierWithStats | null>(null);
   const [formData, setFormData] = useState<CreateSupplierParams>({
     name: '',
     nmrRank: '',
@@ -42,7 +43,7 @@ export function SuppliersList() {
 
   async function loadSuppliers() {
     setLoading(true);
-    const response = await window.sqts.suppliers.list();
+    const response = await window.sqts.suppliers.listWithStats();
     if (response.success && response.data) {
       setSuppliers(response.data);
     }
@@ -55,7 +56,8 @@ export function SuppliersList() {
     setDialogOpen(true);
   }
 
-  function openEditDialog(supplier: Supplier) {
+  function openEditDialog(supplier: SupplierWithStats, e: React.MouseEvent) {
+    e.stopPropagation();
     setEditingSupplier(supplier);
     setFormData({
       name: supplier.name,
@@ -65,7 +67,8 @@ export function SuppliersList() {
     setDialogOpen(true);
   }
 
-  function openDeleteDialog(supplier: Supplier) {
+  function openDeleteDialog(supplier: SupplierWithStats, e: React.MouseEvent) {
+    e.stopPropagation();
     setDeletingSupplier(supplier);
     setDeleteDialogOpen(true);
   }
@@ -107,6 +110,12 @@ export function SuppliersList() {
     }
   }
 
+  function getOverallStatus(supplier: SupplierWithStats): string {
+    if (supplier.overdueCount > 0) return 'At Risk';
+    if (supplier.dueSoonCount > 0) return 'At Risk';
+    return 'On Track';
+  }
+
   return (
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
@@ -140,42 +149,71 @@ export function SuppliersList() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
+                <TableHead>Supplier Name</TableHead>
                 <TableHead>NMR Rank</TableHead>
-                <TableHead>Notes</TableHead>
+                <TableHead className="text-right">Active Projects</TableHead>
+                <TableHead className="text-right">Overdue</TableHead>
+                <TableHead className="text-right">Due Soon (14d)</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {suppliers.map((supplier) => (
-                <TableRow key={supplier.id}>
+                <TableRow
+                  key={supplier.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => navigate(`/suppliers/${supplier.id}`)}
+                >
                   <TableCell className="font-medium">{supplier.name}</TableCell>
-                  <TableCell>{supplier.nmrRank || '-'}</TableCell>
-                  <TableCell className="max-w-md truncate">
-                    {supplier.notes || '-'}
+                  <TableCell>
+                    <RankBadge rank={supplier.nmrRank} />
+                  </TableCell>
+                  <TableCell className="text-right">{supplier.activeProjects}</TableCell>
+                  <TableCell className="text-right">
+                    {supplier.overdueCount > 0 ? (
+                      <span className="text-red-600 font-medium">{supplier.overdueCount}</span>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => navigate(`/suppliers/${supplier.id}`)}
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEditDialog(supplier)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openDeleteDialog(supplier)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    {supplier.dueSoonCount > 0 ? (
+                      <span className="text-amber-600 font-medium">{supplier.dueSoonCount}</span>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={getOverallStatus(supplier)} size="sm" />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => openEditDialog(supplier, e)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => openDeleteDialog(supplier, e)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/suppliers/${supplier.id}`);
+                        }}
+                      >
+                        Open
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -214,7 +252,7 @@ export function SuppliersList() {
                   id="nmrRank"
                   value={formData.nmrRank}
                   onChange={(e) => setFormData({ ...formData, nmrRank: e.target.value })}
-                  placeholder="e.g., A, B, C or 1, 2, 3"
+                  placeholder="e.g., A1, B2, C1"
                 />
               </div>
               <div className="grid gap-2">

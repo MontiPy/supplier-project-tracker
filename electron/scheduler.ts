@@ -10,12 +10,14 @@ import type { ProjectScheduleItem, ScheduleItemWithDates } from '../shared/types
  * @param scheduleItems - Array of project schedule items
  * @param projectAnchorDate - Optional project-wide anchor date (YYYY-MM-DD)
  * @param supplierAnchorDate - Optional supplier-specific anchor date (YYYY-MM-DD)
+ * @param useBusinessDays - If true, offset days skip weekends (Sat/Sun)
  * @returns Array of schedule items with computed planned dates
  */
 export function calculateScheduleDates(
   scheduleItems: ProjectScheduleItem[],
   projectAnchorDate?: string,
-  supplierAnchorDate?: string
+  supplierAnchorDate?: string,
+  useBusinessDays: boolean = false
 ): ScheduleItemWithDates[] {
   const resolvedDates = new Map<number, string>(); // itemId -> computed date
   const results: ScheduleItemWithDates[] = [];
@@ -36,7 +38,8 @@ export function calculateScheduleDates(
         item,
         resolvedDates,
         projectAnchorDate,
-        supplierAnchorDate
+        supplierAnchorDate,
+        useBusinessDays
       );
 
       if (plannedDate !== null) {
@@ -94,13 +97,15 @@ export function calculateScheduleDates(
  * @param resolvedDates - Map of already-computed dates for other items
  * @param projectAnchorDate - Optional project anchor date
  * @param supplierAnchorDate - Optional supplier anchor date
+ * @param useBusinessDays - If true, offset days skip weekends
  * @returns Computed date as YYYY-MM-DD string, or null if cannot compute
  */
 function calculatePlannedDate(
   item: ProjectScheduleItem,
   resolvedDates: Map<number, string>,
   projectAnchorDate?: string,
-  supplierAnchorDate?: string
+  supplierAnchorDate?: string,
+  useBusinessDays: boolean = false
 ): string | null {
   if (item.overrideEnabled && item.overrideDate) {
     return item.overrideDate;
@@ -117,7 +122,7 @@ function calculatePlannedDate(
       if (item.offsetDays === null) {
         return projectAnchorDate; // No offset, use anchor directly
       }
-      return addDays(projectAnchorDate, item.offsetDays);
+      return addDays(projectAnchorDate, item.offsetDays, useBusinessDays);
 
     case 'SUPPLIER_ANCHOR':
       if (!supplierAnchorDate) {
@@ -126,7 +131,7 @@ function calculatePlannedDate(
       if (item.offsetDays === null) {
         return supplierAnchorDate; // No offset, use anchor directly
       }
-      return addDays(supplierAnchorDate, item.offsetDays);
+      return addDays(supplierAnchorDate, item.offsetDays, useBusinessDays);
 
     case 'SCHEDULE_ITEM':
       if (item.anchorRefId === null) {
@@ -139,7 +144,7 @@ function calculatePlannedDate(
       if (item.offsetDays === null) {
         return refDate; // No offset, use reference date directly
       }
-      return addDays(refDate, item.offsetDays);
+      return addDays(refDate, item.offsetDays, useBusinessDays);
 
     case 'COMPLETION':
       // Phase 3 - not implemented yet
@@ -156,11 +161,29 @@ function calculatePlannedDate(
  *
  * @param dateString - Date in YYYY-MM-DD format
  * @param offsetDays - Number of days to add (can be negative)
+ * @param useBusinessDays - If true, skip weekends (Sat=6, Sun=0)
  * @returns New date as YYYY-MM-DD string
  */
-function addDays(dateString: string, offsetDays: number): string {
+function addDays(dateString: string, offsetDays: number, useBusinessDays: boolean = false): string {
   const date = new Date(dateString + 'T00:00:00'); // Parse as local time
-  date.setDate(date.getDate() + offsetDays);
+
+  if (!useBusinessDays) {
+    // Simple calendar days
+    date.setDate(date.getDate() + offsetDays);
+  } else {
+    // Business days - skip weekends
+    const direction = offsetDays >= 0 ? 1 : -1;
+    let remaining = Math.abs(offsetDays);
+
+    while (remaining > 0) {
+      date.setDate(date.getDate() + direction);
+      const dayOfWeek = date.getDay();
+      // Skip Saturday (6) and Sunday (0)
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+        remaining--;
+      }
+    }
+  }
 
   // Format as YYYY-MM-DD
   const year = date.getFullYear();

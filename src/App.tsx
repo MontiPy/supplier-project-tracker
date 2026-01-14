@@ -3,13 +3,14 @@ import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { SuppliersList } from './pages/Suppliers/SuppliersList';
 import { SupplierDetail } from './pages/Suppliers/SupplierDetail';
-import { ActivityTemplatesList } from './pages/ActivityLibrary/ActivityTemplatesList';
-import { ActivityTemplateDetailPage } from './pages/ActivityLibrary/ActivityTemplateDetail';
+import { ActivityLibraryPage } from './pages/ActivityLibrary/ActivityLibraryPage';
 import { HelpPage } from './pages/Help/HelpPage';
 import { ProjectsList } from './pages/Projects/ProjectsList';
 import ProjectDetailPage from './pages/Projects/ProjectDetail';
 import { SupplierProjectDetailPage } from './pages/SupplierProjects/SupplierProjectDetail';
 import { PartsList } from './pages/Parts/PartsList';
+import { SettingsPage } from './pages/Settings/SettingsPage';
+import { ReportsPage } from './pages/Reports/ReportsPage';
 
 function App() {
   return (
@@ -21,10 +22,11 @@ function App() {
         <Route path="/supplier-projects/:id" element={<SupplierProjectDetailPage />} />
         <Route path="/projects/:id" element={<ProjectDetailPage />} />
         <Route path="/projects" element={<ProjectsList />} />
-        <Route path="/activity-library" element={<ActivityTemplatesList />} />
-        <Route path="/activity-library/:id" element={<ActivityTemplateDetailPage />} />
+        <Route path="/activity-library" element={<ActivityLibraryPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="/parts" element={<PartsList />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
       </Routes>
     </Layout>
   );

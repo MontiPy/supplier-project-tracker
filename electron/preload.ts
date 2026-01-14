@@ -39,6 +39,17 @@ import type {
   AuditEvent,
   AuditEventQuery,
   APIResponse,
+  // Phase 5: Settings, Dashboard, Reports
+  AppSettings,
+  UpdateSettingParams,
+  DashboardFilters,
+  DashboardData,
+  ReportsOverview,
+  SupplierProgress,
+  SupplierWithStats,
+  ProjectWithStats,
+  ActivityTemplateWithCounts,
+  SupplierProjectWithProgress,
 } from '../shared/types.js';
 
 // Expose protected methods that allow the renderer process to use
@@ -54,6 +65,8 @@ contextBridge.exposeInMainWorld('sqts', {
   // Suppliers API
   suppliers: {
     list: (): Promise<APIResponse<Supplier[]>> => ipcRenderer.invoke('suppliers:list'),
+    listWithStats: (): Promise<APIResponse<SupplierWithStats[]>> =>
+      ipcRenderer.invoke('suppliers:list-with-stats'),
     get: (id: number): Promise<APIResponse<Supplier>> => ipcRenderer.invoke('suppliers:get', id),
     create: (params: CreateSupplierParams): Promise<APIResponse<Supplier>> =>
       ipcRenderer.invoke('suppliers:create', params),
@@ -66,6 +79,8 @@ contextBridge.exposeInMainWorld('sqts', {
   activityTemplates: {
     list: (): Promise<APIResponse<ActivityTemplate[]>> =>
       ipcRenderer.invoke('activity-templates:list'),
+    listWithCounts: (): Promise<APIResponse<ActivityTemplateWithCounts[]>> =>
+      ipcRenderer.invoke('activity-templates:list-with-counts'),
     get: (id: number): Promise<APIResponse<ActivityTemplate>> =>
       ipcRenderer.invoke('activity-templates:get', id),
     create: (params: CreateActivityTemplateParams): Promise<APIResponse<ActivityTemplate>> =>
@@ -74,6 +89,8 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('activity-templates:update', params),
     delete: (id: number): Promise<APIResponse<void>> =>
       ipcRenderer.invoke('activity-templates:delete', id),
+    duplicate: (id: number): Promise<APIResponse<ActivityTemplate>> =>
+      ipcRenderer.invoke('activity-templates:duplicate', id),
     scheduleItems: {
       list: (activityTemplateId: number): Promise<APIResponse<ActivityTemplateScheduleItem[]>> =>
         ipcRenderer.invoke('activity-template-schedule-items:list', activityTemplateId),
@@ -93,6 +110,8 @@ contextBridge.exposeInMainWorld('sqts', {
   // Projects API
   projects: {
     list: (): Promise<APIResponse<Project[]>> => ipcRenderer.invoke('projects:list'),
+    listWithStats: (): Promise<APIResponse<ProjectWithStats[]>> =>
+      ipcRenderer.invoke('projects:list-with-stats'),
     get: (id: number): Promise<APIResponse<Project>> => ipcRenderer.invoke('projects:get', id),
     getDetail: (id: number): Promise<APIResponse<ProjectDetail>> =>
       ipcRenderer.invoke('projects:get-detail', id),
@@ -144,6 +163,8 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('supplier-projects:list'),
     listBySupplier: (supplierId: number): Promise<APIResponse<SupplierProjectSummary[]>> =>
       ipcRenderer.invoke('supplier-projects:list-by-supplier', supplierId),
+    listBySupplierWithProgress: (supplierId: number): Promise<APIResponse<SupplierProjectWithProgress[]>> =>
+      ipcRenderer.invoke('supplier-projects:list-by-supplier-with-progress', supplierId),
     getDetail: (id: number): Promise<APIResponse<SupplierProjectDetail>> =>
       ipcRenderer.invoke('supplier-projects:get-detail', id),
     apply: (params: ApplySupplierProjectParams): Promise<APIResponse<SupplierProject>> =>
@@ -182,6 +203,27 @@ contextBridge.exposeInMainWorld('sqts', {
     list: (params: AuditEventQuery): Promise<APIResponse<AuditEvent[]>> =>
       ipcRenderer.invoke('audit:list', params),
   },
+
+  // Settings API (Phase 5)
+  settings: {
+    getAll: (): Promise<APIResponse<AppSettings>> => ipcRenderer.invoke('settings:get-all'),
+    update: (params: UpdateSettingParams): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('settings:update', params),
+  },
+
+  // Dashboard API (Phase 5)
+  dashboard: {
+    getData: (filters: DashboardFilters): Promise<APIResponse<DashboardData>> =>
+      ipcRenderer.invoke('dashboard:get-data', filters),
+  },
+
+  // Reports API (Phase 5)
+  reports: {
+    getOverview: (): Promise<APIResponse<ReportsOverview>> =>
+      ipcRenderer.invoke('reports:get-overview'),
+    getSupplierProgress: (): Promise<APIResponse<SupplierProgress[]>> =>
+      ipcRenderer.invoke('reports:get-supplier-progress'),
+  },
 });
 
 // Type definition for TypeScript support
@@ -193,6 +235,7 @@ export interface SQTSAPI {
   };
   suppliers: {
     list: () => Promise<APIResponse<Supplier[]>>;
+    listWithStats: () => Promise<APIResponse<SupplierWithStats[]>>;
     get: (id: number) => Promise<APIResponse<Supplier>>;
     create: (params: CreateSupplierParams) => Promise<APIResponse<Supplier>>;
     update: (params: UpdateSupplierParams) => Promise<APIResponse<Supplier>>;
@@ -200,10 +243,12 @@ export interface SQTSAPI {
   };
   activityTemplates: {
     list: () => Promise<APIResponse<ActivityTemplate[]>>;
+    listWithCounts: () => Promise<APIResponse<ActivityTemplateWithCounts[]>>;
     get: (id: number) => Promise<APIResponse<ActivityTemplate>>;
     create: (params: CreateActivityTemplateParams) => Promise<APIResponse<ActivityTemplate>>;
     update: (params: UpdateActivityTemplateParams) => Promise<APIResponse<ActivityTemplate>>;
     delete: (id: number) => Promise<APIResponse<void>>;
+    duplicate: (id: number) => Promise<APIResponse<ActivityTemplate>>;
     scheduleItems: {
       list: (activityTemplateId: number) => Promise<APIResponse<ActivityTemplateScheduleItem[]>>;
       create: (
@@ -217,6 +262,7 @@ export interface SQTSAPI {
   };
   projects: {
     list: () => Promise<APIResponse<Project[]>>;
+    listWithStats: () => Promise<APIResponse<ProjectWithStats[]>>;
     get: (id: number) => Promise<APIResponse<Project>>;
     getDetail: (id: number) => Promise<APIResponse<ProjectDetail>>;
     create: (params: CreateProjectParams) => Promise<APIResponse<Project>>;
@@ -245,6 +291,7 @@ export interface SQTSAPI {
   supplierProjects: {
     list: () => Promise<APIResponse<SupplierProjectSummary[]>>;
     listBySupplier: (supplierId: number) => Promise<APIResponse<SupplierProjectSummary[]>>;
+    listBySupplierWithProgress: (supplierId: number) => Promise<APIResponse<SupplierProjectWithProgress[]>>;
     getDetail: (id: number) => Promise<APIResponse<SupplierProjectDetail>>;
     apply: (params: ApplySupplierProjectParams) => Promise<APIResponse<SupplierProject>>;
     update: (params: UpdateSupplierProjectParams) => Promise<APIResponse<SupplierProject>>;
@@ -267,6 +314,17 @@ export interface SQTSAPI {
   };
   audit: {
     list: (params: AuditEventQuery) => Promise<APIResponse<AuditEvent[]>>;
+  };
+  settings: {
+    getAll: () => Promise<APIResponse<AppSettings>>;
+    update: (params: UpdateSettingParams) => Promise<APIResponse<void>>;
+  };
+  dashboard: {
+    getData: (filters: DashboardFilters) => Promise<APIResponse<DashboardData>>;
+  };
+  reports: {
+    getOverview: () => Promise<APIResponse<ReportsOverview>>;
+    getSupplierProgress: () => Promise<APIResponse<SupplierProgress[]>>;
   };
 }
 

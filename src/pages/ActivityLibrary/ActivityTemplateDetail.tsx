@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Info, Plus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -55,6 +55,25 @@ export function ActivityTemplateDetailPage() {
     anchorRefId: undefined,
     offsetDays: undefined,
   });
+  const milestones = items.filter((item) => item.kind === 'MILESTONE');
+  const itemById = new Map(items.map((item) => [item.id, item] as const));
+  const milestoneIds = new Set(milestones.map((item) => item.id));
+  const tasksByMilestone = items.reduce((acc, item) => {
+    if (item.kind === 'TASK' && item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId) {
+      if (!acc.has(item.anchorRefId)) {
+        acc.set(item.anchorRefId, []);
+      }
+      acc.get(item.anchorRefId)?.push(item);
+    }
+    return acc;
+  }, new Map<number, ActivityTemplateScheduleItem[]>());
+  const ungroupedTasks = items.filter(
+    (item) =>
+      item.kind === 'TASK' &&
+      (item.anchorType !== 'SCHEDULE_ITEM' ||
+        !item.anchorRefId ||
+        !milestoneIds.has(item.anchorRefId))
+  );
 
   useEffect(() => {
     if (!Number.isNaN(templateId)) {
@@ -92,13 +111,28 @@ export function ActivityTemplateDetailPage() {
     setDialogOpen(true);
   }
 
+  function openCreateTaskDialog(milestoneId?: number) {
+    const defaultMilestoneId = milestoneId ?? milestones[0]?.id;
+    setEditingItem(null);
+    setFormData({
+      activityTemplateId: templateId,
+      kind: 'TASK',
+      name: '',
+      anchorType: 'SCHEDULE_ITEM',
+      anchorRefId: defaultMilestoneId,
+      offsetDays: 0,
+    });
+    setDialogOpen(true);
+  }
+
   function openEditDialog(item: ActivityTemplateScheduleItem) {
     setEditingItem(item);
+    const anchorType = item.kind === 'TASK' ? 'SCHEDULE_ITEM' : item.anchorType;
     setFormData({
       activityTemplateId: templateId,
       kind: item.kind,
       name: item.name,
-      anchorType: item.anchorType,
+      anchorType,
       anchorRefId: item.anchorRefId || undefined,
       offsetDays: item.offsetDays ?? undefined,
     });
@@ -112,14 +146,17 @@ export function ActivityTemplateDetailPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const anchorType = formData.kind === 'TASK' ? 'SCHEDULE_ITEM' : formData.anchorType;
+    const anchorRefId =
+      formData.kind === 'TASK' ? formData.anchorRefId || undefined : formData.anchorRefId;
 
     if (editingItem) {
       const params: UpdateActivityTemplateScheduleItemParams = {
         id: editingItem.id,
         kind: formData.kind,
         name: formData.name,
-        anchorType: formData.anchorType,
-        anchorRefId: formData.anchorRefId || undefined,
+        anchorType,
+        anchorRefId,
         offsetDays: formData.offsetDays ?? undefined,
       };
       const response = await window.sqts.activityTemplates.scheduleItems.update(params);
@@ -128,7 +165,11 @@ export function ActivityTemplateDetailPage() {
         setDialogOpen(false);
       }
     } else {
-      const response = await window.sqts.activityTemplates.scheduleItems.create(formData);
+      const response = await window.sqts.activityTemplates.scheduleItems.create({
+        ...formData,
+        anchorType,
+        anchorRefId,
+      });
       if (response.success) {
         await loadItems();
         setDialogOpen(false);
@@ -145,6 +186,54 @@ export function ActivityTemplateDetailPage() {
         setDeletingItem(null);
       }
     }
+  }
+
+  function formatAnchorType(anchorType: AnchorType) {
+    return anchorType.replace('_', ' ');
+  }
+
+  function getAnchorRefLabel(item: ActivityTemplateScheduleItem) {
+    if (item.anchorType !== 'SCHEDULE_ITEM' || !item.anchorRefId) {
+      return '-';
+    }
+    return itemById.get(item.anchorRefId)?.name || `Schedule Item ${item.anchorRefId}`;
+  }
+
+  function getOffsetLabel(item: ActivityTemplateScheduleItem) {
+    if (item.offsetDays == null) {
+      return '-';
+    }
+    return item.offsetDays;
+  }
+
+  function getNotes(item: ActivityTemplateScheduleItem) {
+    if (item.kind === 'MILESTONE') {
+      return item.anchorType === 'PROJECT_ANCHOR'
+        ? 'Set at project level'
+        : 'Set at activity level';
+    }
+    if (item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId) {
+      const anchorName = itemById.get(item.anchorRefId)?.name || 'milestone';
+      if (!item.offsetDays) {
+        return `Due on ${anchorName}`;
+      }
+      if (item.offsetDays < 0) {
+        return `Due ${Math.abs(item.offsetDays)} days before ${anchorName}`;
+      }
+      return `Due ${item.offsetDays} days after ${anchorName}`;
+    }
+    return '-';
+  }
+
+  function handleValidate() {
+    const invalidTasks = items.filter(
+      (item) => item.kind === 'TASK' && (!item.anchorRefId || item.anchorType !== 'SCHEDULE_ITEM')
+    );
+    if (invalidTasks.length > 0) {
+      alert('Some tasks are missing a milestone anchor. Please fix them before continuing.');
+      return;
+    }
+    alert('Schedule template looks valid.');
   }
 
   if (!template) {
@@ -168,7 +257,7 @@ export function ActivityTemplateDetailPage() {
           </Button>
           <Button onClick={openCreateDialog}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Schedule Item
+            Add Milestone
           </Button>
         </div>
       </div>
@@ -185,44 +274,203 @@ export function ActivityTemplateDetailPage() {
           </p>
           <Button onClick={openCreateDialog}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Schedule Item
+            Add Milestone
           </Button>
         </div>
       ) : (
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Type</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Anchor</TableHead>
-                <TableHead>Offset Days</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>{item.kind}</TableCell>
-                  <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell>
-                    {item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId
-                      ? `Schedule Item ${item.anchorRefId}`
-                      : item.anchorType}
-                  </TableCell>
-                  <TableCell>{item.offsetDays ?? '-'}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => openEditDialog(item)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => openDeleteDialog(item)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            <Info className="h-4 w-4" />
+            <div>
+              This template defines structure and offset rules. Milestones anchored to project
+              dates are set at the project level, and tasks inherit dates from milestones.
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm">
+                Schedule Templates
+              </Button>
+              <Button variant="ghost" size="sm" disabled>
+                Applicability Rules
+              </Button>
+              <Button variant="ghost" size="sm" disabled>
+                Metadata
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={openCreateDialog}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Milestone
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openCreateTaskDialog()}
+                disabled={milestones.length === 0}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Task
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleValidate}>
+                Validate
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">Sort</TableHead>
+                  <TableHead className="w-16">Type</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Anchor Type</TableHead>
+                  <TableHead>Anchor Ref</TableHead>
+                  <TableHead>Offset Days</TableHead>
+                  <TableHead>Notes</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {(() => {
+                  let rowIndex = 0;
+                  return (
+                    <>
+                      {milestones.map((milestone) => (
+                        <Fragment key={milestone.id}>
+                          {(() => {
+                            rowIndex += 1;
+                            return (
+                              <TableRow key={milestone.id}>
+                                <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
+                                <TableCell>
+                                  <span className="rounded bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">
+                                    M
+                                  </span>
+                                </TableCell>
+                                <TableCell className="font-medium">{milestone.name}</TableCell>
+                                <TableCell>{formatAnchorType(milestone.anchorType)}</TableCell>
+                                <TableCell>{getAnchorRefLabel(milestone)}</TableCell>
+                                <TableCell>{getOffsetLabel(milestone)}</TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {getNotes(milestone)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openCreateTaskDialog(milestone.id)}
+                                  >
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    Add Task
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openEditDialog(milestone)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openDeleteDialog(milestone)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })()}
+                          {(tasksByMilestone.get(milestone.id) || []).map((task) => {
+                            rowIndex += 1;
+                            return (
+                              <TableRow key={task.id}>
+                                <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
+                                <TableCell>
+                                  <span className="rounded bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">
+                                    T
+                                  </span>
+                                </TableCell>
+                                <TableCell className="pl-8 font-medium">{task.name}</TableCell>
+                                <TableCell>{formatAnchorType(task.anchorType)}</TableCell>
+                                <TableCell>{getAnchorRefLabel(task)}</TableCell>
+                                <TableCell>{getOffsetLabel(task)}</TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {getNotes(task)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openEditDialog(task)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openDeleteDialog(task)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </Fragment>
+                      ))}
+                      {ungroupedTasks.length > 0 && (
+                        <>
+                          <TableRow>
+                            <TableCell colSpan={8} className="text-xs uppercase text-muted-foreground">
+                              Ungrouped Tasks
+                            </TableCell>
+                          </TableRow>
+                          {ungroupedTasks.map((task) => {
+                            rowIndex += 1;
+                            return (
+                              <TableRow key={task.id}>
+                                <TableCell className="text-muted-foreground">{rowIndex}</TableCell>
+                                <TableCell>
+                                  <span className="rounded bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">
+                                    T
+                                  </span>
+                                </TableCell>
+                                <TableCell className="font-medium">{task.name}</TableCell>
+                                <TableCell>{formatAnchorType(task.anchorType)}</TableCell>
+                                <TableCell>{getAnchorRefLabel(task)}</TableCell>
+                                <TableCell>{getOffsetLabel(task)}</TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {getNotes(task)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openEditDialog(task)}
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openDeleteDialog(task)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+              </TableBody>
+            </Table>
+          </div>
         </div>
       )}
 
@@ -244,9 +492,15 @@ export function ActivityTemplateDetailPage() {
                   id="kind"
                   className="h-10 rounded-md border bg-transparent px-3 text-sm"
                   value={formData.kind}
-                  onChange={(e) =>
-                    setFormData({ ...formData, kind: e.target.value as 'MILESTONE' | 'TASK' })
-                  }
+                  onChange={(e) => {
+                    const nextKind = e.target.value as 'MILESTONE' | 'TASK';
+                    setFormData((prev) => ({
+                      ...prev,
+                      kind: nextKind,
+                      anchorType: nextKind === 'TASK' ? 'SCHEDULE_ITEM' : prev.anchorType,
+                      anchorRefId: nextKind === 'TASK' ? prev.anchorRefId : undefined,
+                    }));
+                  }}
                   required
                 >
                   <option value="MILESTONE">Milestone</option>
@@ -262,27 +516,31 @@ export function ActivityTemplateDetailPage() {
                   required
                 />
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="anchorType">Anchor Type *</Label>
-                <select
-                  id="anchorType"
-                  className="h-10 rounded-md border bg-transparent px-3 text-sm"
-                  value={formData.anchorType}
-                  onChange={(e) =>
-                    setFormData({ ...formData, anchorType: e.target.value as AnchorType })
-                  }
-                  required
-                >
-                  {anchorTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {formData.anchorType === 'SCHEDULE_ITEM' && (
+              {formData.kind === 'MILESTONE' && (
                 <div className="grid gap-2">
-                  <Label htmlFor="anchorRefId">Anchor Schedule Item *</Label>
+                  <Label htmlFor="anchorType">Anchor Type *</Label>
+                  <select
+                    id="anchorType"
+                    className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                    value={formData.anchorType}
+                    onChange={(e) =>
+                      setFormData({ ...formData, anchorType: e.target.value as AnchorType })
+                    }
+                    required
+                  >
+                    {anchorTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {(formData.kind === 'TASK' || formData.anchorType === 'SCHEDULE_ITEM') && (
+                <div className="grid gap-2">
+                  <Label htmlFor="anchorRefId">
+                    {formData.kind === 'TASK' ? 'Milestone *' : 'Anchor Schedule Item *'}
+                  </Label>
                   <select
                     id="anchorRefId"
                     className="h-10 rounded-md border bg-transparent px-3 text-sm"
@@ -295,15 +553,20 @@ export function ActivityTemplateDetailPage() {
                     <option value="" disabled>
                       Select item
                     </option>
-                    {items.map((item) => (
+                    {(formData.kind === 'TASK' ? milestones : items).map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}
                       </option>
                     ))}
                   </select>
+                  {formData.kind === 'TASK' && milestones.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Create a milestone before adding tasks.
+                    </p>
+                  )}
                 </div>
               )}
-              {formData.anchorType !== 'FIXED_DATE' && (
+              {(formData.kind === 'TASK' || formData.anchorType !== 'FIXED_DATE') && (
                 <div className="grid gap-2">
                   <Label htmlFor="offsetDays">Offset Days</Label>
                   <Input
@@ -324,7 +587,7 @@ export function ActivityTemplateDetailPage() {
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit">
+              <Button type="submit" disabled={formData.kind === 'TASK' && !formData.anchorRefId}>
                 {editingItem ? 'Save Changes' : 'Create Schedule Item'}
               </Button>
             </DialogFooter>

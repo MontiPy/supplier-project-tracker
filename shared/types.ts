@@ -17,6 +17,8 @@ export interface ActivityTemplate {
   id: number;
   name: string;
   description: string | null;
+  category: string | null;
+  updatedAt: string | null;
   createdAt: string;
 }
 
@@ -76,6 +78,8 @@ export interface SupplierProject {
   projectId: number;
   projectVersion: string;
   supplierAnchorDate: string | null;
+  supplierName?: string;
+  projectName?: string;
   createdAt: string;
 }
 
@@ -146,6 +150,7 @@ export interface SupplierProjectDetail extends SupplierProject {
   supplierName: string;
   projectName: string;
   projectAnchorDate: string | null;
+  nmrRank: string | null;
   activities: SupplierProjectActivityDetail[];
 }
 
@@ -173,6 +178,7 @@ export interface AuditEvent {
   entityId: number;
   action: string;
   payload: string | null;
+  details: string | null;
   createdAt: string;
 }
 
@@ -198,12 +204,14 @@ export interface UpdateSupplierParams {
 export interface CreateActivityTemplateParams {
   name: string;
   description?: string;
+  category?: string;
 }
 
 export interface UpdateActivityTemplateParams {
   id: number;
   name?: string;
   description?: string;
+  category?: string;
 }
 
 // Project operations
@@ -338,6 +346,7 @@ export interface ScheduleItemWithDates extends ProjectScheduleItem {
 
 export interface ProjectActivityDetail extends ProjectActivity {
   activityTemplateName: string;
+  activityTemplateCategory: string | null;
   scheduleItems: ScheduleItemWithDates[];
 }
 
@@ -387,4 +396,123 @@ export interface APIResponse<T = any> {
   success: boolean;
   data?: T;
   error?: string;
+}
+
+// ============================================================================
+// Phase 5: Settings, Dashboard, Reports
+// ============================================================================
+
+// Settings
+export interface Setting {
+  key: string;
+  value: string;
+  updatedAt: string;
+}
+
+export interface AppSettings {
+  nmrRanks: string[];
+  paRanks: string[];
+  propagationSkipComplete: boolean;
+  propagationSkipLocked: boolean;
+  propagationSkipOverridden: boolean;
+  dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD';
+  useBusinessDays: boolean;
+}
+
+export interface UpdateSettingParams {
+  key: string;
+  value: string;
+}
+
+// Dashboard
+export interface DashboardFilters {
+  dueRange?: number; // days
+  supplierId?: number;
+  projectId?: number;
+  status?: string;
+}
+
+export interface DashboardSummary {
+  overdue: number;
+  dueSoon: number;
+  blocked: number;
+  needsPropagation: number;
+}
+
+export interface ActionableItem {
+  id: number;
+  supplierScheduleItemInstanceId: number;
+  dueDate: string | null;
+  supplierId: number;
+  supplierName: string;
+  projectId: number;
+  projectName: string;
+  activityName: string;
+  itemName: string;
+  itemKind: ScheduleItemKind;
+  status: ActivityStatus;
+  isLate: boolean;
+}
+
+export interface DashboardData {
+  summary: DashboardSummary;
+  actionableItems: ActionableItem[];
+}
+
+// Reports
+export interface ReportsOverview {
+  overdueCount: number;
+  dueSoonCount: number;
+  overallCompletionPercent: number;
+  totalItems: number;
+  completedItems: number;
+}
+
+export interface SupplierProgress {
+  supplierId: number;
+  supplierName: string;
+  nmrRank: string | null;
+  totalItems: number;
+  completedItems: number;
+  overdueItems: number;
+  progressPercent: number;
+  status: 'On Track' | 'At Risk' | 'Behind';
+}
+
+// Supplier list with stats
+export interface SupplierWithStats extends Supplier {
+  activeProjects: number;
+  overdueCount: number;
+  dueSoonCount: number;
+  status: 'On Track' | 'At Risk' | 'Behind';
+}
+
+// Project list with stats
+export interface ProjectWithStats extends Project {
+  activityCount: number;
+  supplierCount: number;
+  nextDue: string | null;
+  nextDueDate: string | null; // alias for nextDue
+  lastUpdated: string | null;
+}
+
+// Activity template with counts
+export interface ActivityTemplateWithCounts extends ActivityTemplate {
+  category: string | null;
+  updatedAt: string | null;
+  milestoneCount: number;
+  taskCount: number;
+}
+
+// Supplier project with progress stats
+export interface SupplierProjectWithProgress extends SupplierProjectSummary {
+  activityName: string | null;
+  totalItems: number;
+  completedItems: number;
+  overdueItems: number;
+  overdueCount: number; // alias for overdueItems
+  progressPercent: number;
+  nextDue: string | null;
+  nextDueDate: string | null; // alias for nextDue
+  status: 'On Track' | 'At Risk' | 'Behind';
 }

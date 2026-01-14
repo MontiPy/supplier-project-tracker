@@ -44,6 +44,19 @@ import type {
   AuditEvent,
   AuditEventQuery,
   APIResponse,
+  // Phase 5: Settings, Dashboard, Reports
+  AppSettings,
+  UpdateSettingParams,
+  DashboardFilters,
+  DashboardData,
+  DashboardSummary,
+  ActionableItem,
+  ReportsOverview,
+  SupplierProgress,
+  SupplierWithStats,
+  ProjectWithStats,
+  ActivityTemplateWithCounts,
+  SupplierProjectWithProgress,
 } from '../shared/types.js';
 
 // ============================================================================
@@ -74,6 +87,14 @@ function getProjectAnchorDateForActivity(projectActivityId: number): string | nu
     [projectActivityId]
   );
   return result?.project_anchor_date ?? null;
+}
+
+function getUseBusinessDaysSetting(): boolean {
+  const result = queryOne<{ value: string }>(
+    'SELECT value FROM settings WHERE key = ?',
+    ['use_business_days']
+  );
+  return result?.value === 'true';
 }
 
 // ============================================================================
@@ -551,7 +572,7 @@ function handleProjectActivitiesList(_event: any, projectId: number): APIRespons
 function handleProjectActivitiesGet(_event: any, id: number): APIResponse<ProjectActivityDetail> {
   try {
     const activity = queryOne(
-      `SELECT pa.*, at.name as activity_template_name
+      `SELECT pa.*, at.name as activity_template_name, at.category as activity_template_category
        FROM project_activities pa
        JOIN activity_templates at ON pa.activity_template_id = at.id
        WHERE pa.id = ?`,
@@ -570,14 +591,18 @@ function handleProjectActivitiesGet(_event: any, id: number): APIResponse<Projec
 
     // Calculate dates
     const projectAnchorDate = getProjectAnchorDateForActivity(id);
+    const useBusinessDays = getUseBusinessDaysSetting();
     const itemsWithDates = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-      projectAnchorDate || undefined
+      projectAnchorDate || undefined,
+      undefined, // supplierAnchorDate
+      useBusinessDays
     );
 
     const result: ProjectActivityDetail = {
       ...toCamelCase<ProjectActivity>(activity),
       activityTemplateName: activity.activity_template_name,
+      activityTemplateCategory: activity.activity_template_category || null,
       scheduleItems: itemsWithDates
     };
 
@@ -829,9 +854,12 @@ function handleScheduleItemsList(
     );
 
     const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
+    const useBusinessDays = getUseBusinessDaysSetting();
     const itemsWithDates = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(items),
-      projectAnchorDate || undefined
+      projectAnchorDate || undefined,
+      undefined, // supplierAnchorDate
+      useBusinessDays
     );
 
     return createSuccessResponse(itemsWithDates);
@@ -1078,7 +1106,7 @@ function handleSupplierProjectsGetDetail(
 ): APIResponse<SupplierProjectDetail> {
   try {
     const supplierProject = queryOne(
-      `SELECT sp.*, s.name as supplier_name, p.name as project_name, p.project_anchor_date
+      `SELECT sp.*, s.name as supplier_name, s.nmr_rank, p.name as project_name, p.project_anchor_date
        FROM supplier_projects sp
        JOIN suppliers s ON sp.supplier_id = s.id
        JOIN projects p ON sp.project_id = p.id
@@ -1124,6 +1152,7 @@ function handleSupplierProjectsGetDetail(
       supplierName: supplierProject.supplier_name,
       projectName: supplierProject.project_name,
       projectAnchorDate: supplierProject.project_anchor_date,
+      nmrRank: supplierProject.nmr_rank || null,
       activities: activitiesWithDetails,
     };
 
@@ -1194,10 +1223,12 @@ function handleSupplierProjectsApply(
         [activity.id]
       );
 
+      const useBusinessDays = getUseBusinessDaysSetting();
       const itemsWithDates = calculateScheduleDates(
         toCamelCase<ProjectScheduleItem[]>(scheduleItems),
         project.project_anchor_date || undefined,
-        supplierAnchorDate || undefined
+        supplierAnchorDate || undefined,
+        useBusinessDays
       );
 
       for (const item of itemsWithDates) {
@@ -1447,7 +1478,7 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 
     // Get all activities for this project
     const activities = query(
-      `SELECT pa.*, at.name as activity_template_name
+      `SELECT pa.*, at.name as activity_template_name, at.category as activity_template_category
        FROM project_activities pa
        JOIN activity_templates at ON pa.activity_template_id = at.id
        WHERE pa.project_id = ?
@@ -1457,6 +1488,7 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 
     // For each activity, get schedule items with computed dates
     const projectAnchorDate = project.project_anchor_date ?? null;
+    const useBusinessDays = getUseBusinessDaysSetting();
     const activitiesWithDetails: ProjectActivityDetail[] = activities.map((activity: any) => {
       const scheduleItems = query<ProjectScheduleItem>(
         'SELECT * FROM project_schedule_items WHERE project_activity_id = ? ORDER BY sort_order',
@@ -1465,12 +1497,15 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 
       const itemsWithDates = calculateScheduleDates(
         toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-        projectAnchorDate
+        projectAnchorDate,
+        undefined, // supplierAnchorDate
+        useBusinessDays
       );
 
       return {
         ...toCamelCase<ProjectActivity>(activity),
         activityTemplateName: activity.activity_template_name,
+        activityTemplateCategory: activity.activity_template_category || null,
         scheduleItems: itemsWithDates
       };
     });
@@ -1538,6 +1573,503 @@ function handleAuditList(
     return createSuccessResponse(events);
   } catch (error) {
     console.error('Error listing audit events:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Phase 5: Settings Handlers
+// ============================================================================
+
+function handleSettingsGetAll(): APIResponse<AppSettings> {
+  try {
+    const settings = query('SELECT * FROM settings');
+    const settingsMap: Record<string, string> = {};
+    for (const s of settings) {
+      settingsMap[(s as any).key] = (s as any).value;
+    }
+
+    const result: AppSettings = {
+      nmrRanks: JSON.parse(settingsMap['nmr_ranks'] || '[]'),
+      paRanks: JSON.parse(settingsMap['pa_ranks'] || '[]'),
+      propagationSkipComplete: settingsMap['propagation_skip_complete'] === 'true',
+      propagationSkipLocked: settingsMap['propagation_skip_locked'] === 'true',
+      propagationSkipOverridden: settingsMap['propagation_skip_overridden'] === 'true',
+      dateFormat: (settingsMap['date_format'] || 'MM/DD/YYYY') as AppSettings['dateFormat'],
+      useBusinessDays: settingsMap['use_business_days'] === 'true',
+    };
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error getting settings:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleSettingsUpdate(_event: any, params: UpdateSettingParams): APIResponse<void> {
+  try {
+    const { key, value } = params;
+    run(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')`,
+      [key, value, value]
+    );
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error updating setting:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Phase 5: Dashboard Handlers
+// ============================================================================
+
+function handleDashboardGetData(_event: any, filters: DashboardFilters): APIResponse<DashboardData> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const dueRange = filters.dueRange || 14;
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + dueRange);
+    const futureDateStr = futureDate.toISOString().split('T')[0];
+
+    // Build WHERE conditions
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (filters.supplierId) {
+      conditions.push('sp.supplier_id = ?');
+      params.push(filters.supplierId);
+    }
+    if (filters.projectId) {
+      conditions.push('sp.project_id = ?');
+      params.push(filters.projectId);
+    }
+    if (filters.status) {
+      conditions.push('ssi.status = ?');
+      params.push(filters.status);
+    }
+
+    const whereClause = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+
+    // Get summary counts
+    const overdueCount = queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       WHERE ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') ${whereClause}`,
+      [today, ...params]
+    )?.count || 0;
+
+    const dueSoonCount = queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       WHERE ssi.planned_date >= ? AND ssi.planned_date <= ? AND ssi.status NOT IN ('Complete', 'Not Required') ${whereClause}`,
+      [today, futureDateStr, ...params]
+    )?.count || 0;
+
+    const blockedCount = queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       WHERE ssi.status = 'Blocked' ${whereClause}`,
+      [...params]
+    )?.count || 0;
+
+    // Count projects needing propagation (simplified - projects with date changes)
+    const needsPropagationCount = 0; // TODO: Implement propagation detection
+
+    const summary: DashboardSummary = {
+      overdue: overdueCount,
+      dueSoon: dueSoonCount,
+      blocked: blockedCount,
+      needsPropagation: needsPropagationCount,
+    };
+
+    // Get actionable items
+    const items = query(
+      `SELECT
+        ssi.id as supplier_schedule_item_instance_id,
+        ssi.planned_date as due_date,
+        s.id as supplier_id,
+        s.name as supplier_name,
+        p.id as project_id,
+        p.name as project_name,
+        at.name as activity_name,
+        psi.name as item_name,
+        psi.kind as item_kind,
+        ssi.status,
+        CASE WHEN ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END as is_late
+       FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       JOIN suppliers s ON sp.supplier_id = s.id
+       JOIN projects p ON sp.project_id = p.id
+       JOIN project_activities pa ON sai.project_activity_id = pa.id
+       JOIN activity_templates at ON pa.activity_template_id = at.id
+       JOIN project_schedule_items psi ON ssi.project_schedule_item_id = psi.id
+       WHERE ssi.status NOT IN ('Complete', 'Not Required')
+         AND ssi.planned_date IS NOT NULL
+         AND ssi.planned_date <= ?
+         ${whereClause}
+       ORDER BY ssi.planned_date ASC
+       LIMIT 100`,
+      [today, futureDateStr, ...params]
+    );
+
+    const actionableItems: ActionableItem[] = items.map((item: any, index: number) => ({
+      id: index,
+      supplierScheduleItemInstanceId: item.supplier_schedule_item_instance_id,
+      dueDate: item.due_date,
+      supplierId: item.supplier_id,
+      supplierName: item.supplier_name,
+      projectId: item.project_id,
+      projectName: item.project_name,
+      activityName: item.activity_name,
+      itemName: item.item_name,
+      itemKind: item.item_kind,
+      status: item.status,
+      isLate: item.is_late === 1,
+    }));
+
+    return createSuccessResponse({ summary, actionableItems });
+  } catch (error) {
+    console.error('Error getting dashboard data:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Phase 5: Reports Handlers
+// ============================================================================
+
+function handleReportsGetOverview(): APIResponse<ReportsOverview> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 14);
+    const futureDateStr = futureDate.toISOString().split('T')[0];
+
+    const total = queryOne<{ count: number }>(
+      'SELECT COUNT(*) as count FROM supplier_schedule_item_instances'
+    )?.count || 0;
+
+    const completed = queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM supplier_schedule_item_instances WHERE status = 'Complete'`
+    )?.count || 0;
+
+    const overdue = queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM supplier_schedule_item_instances
+       WHERE planned_date < ? AND status NOT IN ('Complete', 'Not Required')`,
+      [today]
+    )?.count || 0;
+
+    const dueSoon = queryOne<{ count: number }>(
+      `SELECT COUNT(*) as count FROM supplier_schedule_item_instances
+       WHERE planned_date >= ? AND planned_date <= ? AND status NOT IN ('Complete', 'Not Required')`,
+      [today, futureDateStr]
+    )?.count || 0;
+
+    return createSuccessResponse({
+      overdueCount: overdue,
+      dueSoonCount: dueSoon,
+      overallCompletionPercent: total > 0 ? Math.round((completed / total) * 100) : 0,
+      totalItems: total,
+      completedItems: completed,
+    });
+  } catch (error) {
+    console.error('Error getting reports overview:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleReportsGetSupplierProgress(): APIResponse<SupplierProgress[]> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const suppliers = query(
+      `SELECT
+        s.id as supplier_id,
+        s.name as supplier_name,
+        s.nmr_rank,
+        COUNT(ssi.id) as total_items,
+        SUM(CASE WHEN ssi.status = 'Complete' THEN 1 ELSE 0 END) as completed_items,
+        SUM(CASE WHEN ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END) as overdue_items
+       FROM suppliers s
+       LEFT JOIN supplier_projects sp ON s.id = sp.supplier_id
+       LEFT JOIN supplier_activity_instances sai ON sp.id = sai.supplier_project_id
+       LEFT JOIN supplier_schedule_item_instances ssi ON sai.id = ssi.supplier_activity_instance_id
+       GROUP BY s.id, s.name, s.nmr_rank
+       ORDER BY s.name`,
+      [today]
+    );
+
+    const result: SupplierProgress[] = suppliers.map((s: any) => {
+      const progressPercent = s.total_items > 0 ? Math.round((s.completed_items / s.total_items) * 100) : 0;
+      let status: 'On Track' | 'At Risk' | 'Behind' = 'On Track';
+      if (s.overdue_items > 0) {
+        status = 'Behind';
+      } else if (progressPercent < 50) {
+        status = 'At Risk';
+      }
+
+      return {
+        supplierId: s.supplier_id,
+        supplierName: s.supplier_name,
+        nmrRank: s.nmr_rank,
+        totalItems: s.total_items || 0,
+        completedItems: s.completed_items || 0,
+        overdueItems: s.overdue_items || 0,
+        progressPercent,
+        status,
+      };
+    });
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error getting supplier progress:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Phase 5: Enhanced List Handlers with Stats
+// ============================================================================
+
+function handleSuppliersListWithStats(): APIResponse<SupplierWithStats[]> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 14);
+    const futureDateStr = futureDate.toISOString().split('T')[0];
+
+    const suppliers = query(
+      `SELECT
+        s.*,
+        COUNT(DISTINCT sp.id) as active_projects,
+        SUM(CASE WHEN ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END) as overdue_count,
+        SUM(CASE WHEN ssi.planned_date >= ? AND ssi.planned_date <= ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END) as due_soon_count
+       FROM suppliers s
+       LEFT JOIN supplier_projects sp ON s.id = sp.supplier_id
+       LEFT JOIN supplier_activity_instances sai ON sp.id = sai.supplier_project_id
+       LEFT JOIN supplier_schedule_item_instances ssi ON sai.id = ssi.supplier_activity_instance_id
+       GROUP BY s.id
+       ORDER BY s.name`,
+      [today, today, futureDateStr]
+    );
+
+    const result: SupplierWithStats[] = suppliers.map((s: any) => {
+      let status: 'On Track' | 'At Risk' | 'Behind' = 'On Track';
+      if (s.overdue_count > 0) {
+        status = 'Behind';
+      } else if (s.due_soon_count > 3) {
+        status = 'At Risk';
+      }
+
+      return {
+        ...toCamelCase<Supplier>(s),
+        activeProjects: s.active_projects || 0,
+        overdueCount: s.overdue_count || 0,
+        dueSoonCount: s.due_soon_count || 0,
+        status,
+      };
+    });
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error listing suppliers with stats:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectsListWithStats(): APIResponse<ProjectWithStats[]> {
+  try {
+    const projects = query(
+      `SELECT
+        p.*,
+        COUNT(DISTINCT pa.id) as activity_count,
+        COUNT(DISTINCT sp.id) as supplier_count,
+        MIN(CASE WHEN ssi.status NOT IN ('Complete', 'Not Required') THEN ssi.planned_date END) as next_due,
+        MAX(p.created_at) as last_updated
+       FROM projects p
+       LEFT JOIN project_activities pa ON p.id = pa.project_id
+       LEFT JOIN supplier_projects sp ON p.id = sp.project_id
+       LEFT JOIN supplier_activity_instances sai ON sp.id = sai.supplier_project_id
+       LEFT JOIN supplier_schedule_item_instances ssi ON sai.id = ssi.supplier_activity_instance_id
+       GROUP BY p.id
+       ORDER BY p.name, p.version`
+    );
+
+    const result: ProjectWithStats[] = projects.map((p: any) => ({
+      ...toCamelCase<Project>(p),
+      activityCount: p.activity_count || 0,
+      supplierCount: p.supplier_count || 0,
+      nextDue: p.next_due || null,
+      nextDueDate: p.next_due || null, // alias for nextDue
+      lastUpdated: p.last_updated || null,
+    }));
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error listing projects with stats:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplatesListWithCounts(): APIResponse<ActivityTemplateWithCounts[]> {
+  try {
+    const templates = query(
+      `SELECT
+        at.*,
+        SUM(CASE WHEN atsi.kind = 'MILESTONE' THEN 1 ELSE 0 END) as milestone_count,
+        SUM(CASE WHEN atsi.kind = 'TASK' THEN 1 ELSE 0 END) as task_count
+       FROM activity_templates at
+       LEFT JOIN activity_template_schedule_items atsi ON at.id = atsi.activity_template_id
+       GROUP BY at.id
+       ORDER BY at.name`
+    );
+
+    const result: ActivityTemplateWithCounts[] = templates.map((t: any) => ({
+      ...toCamelCase<ActivityTemplate>(t),
+      milestoneCount: t.milestone_count || 0,
+      taskCount: t.task_count || 0,
+    }));
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error listing activity templates with counts:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleSupplierProjectsListBySupplierWithProgress(
+  _event: any,
+  supplierId: number
+): APIResponse<SupplierProjectWithProgress[]> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const supplierProjects = query(
+      `SELECT
+        sp.*,
+        s.name as supplier_name,
+        p.name as project_name,
+        p.project_anchor_date,
+        at.name as activity_name,
+        COUNT(ssi.id) as total_items,
+        SUM(CASE WHEN ssi.status = 'Complete' THEN 1 ELSE 0 END) as completed_items,
+        SUM(CASE WHEN ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END) as overdue_items,
+        MIN(CASE WHEN ssi.status NOT IN ('Complete', 'Not Required') THEN ssi.planned_date END) as next_due
+       FROM supplier_projects sp
+       JOIN suppliers s ON sp.supplier_id = s.id
+       JOIN projects p ON sp.project_id = p.id
+       LEFT JOIN supplier_activity_instances sai ON sp.id = sai.supplier_project_id
+       LEFT JOIN project_activities pa ON sai.project_activity_id = pa.id
+       LEFT JOIN activity_templates at ON pa.activity_template_id = at.id
+       LEFT JOIN supplier_schedule_item_instances ssi ON sai.id = ssi.supplier_activity_instance_id
+       WHERE sp.supplier_id = ?
+       GROUP BY sp.id
+       ORDER BY p.name, sp.project_version`,
+      [today, supplierId]
+    );
+
+    const result: SupplierProjectWithProgress[] = supplierProjects.map((sp: any) => {
+      const totalItems = sp.total_items || 0;
+      const completedItems = sp.completed_items || 0;
+      const overdueItems = sp.overdue_items || 0;
+      const progressPercent = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+
+      let status: 'On Track' | 'At Risk' | 'Behind' = 'On Track';
+      if (overdueItems > 0) {
+        status = 'Behind';
+      } else if (totalItems > 0 && (completedItems / totalItems) < 0.5) {
+        status = 'At Risk';
+      }
+
+      return {
+        ...toCamelCase<SupplierProjectSummary>({
+          ...sp,
+          supplier_name: sp.supplier_name,
+          project_name: sp.project_name,
+          project_anchor_date: sp.project_anchor_date,
+        }),
+        supplierName: sp.supplier_name,
+        projectName: sp.project_name,
+        projectAnchorDate: sp.project_anchor_date,
+        activityName: sp.activity_name || null,
+        totalItems,
+        completedItems,
+        overdueItems,
+        overdueCount: overdueItems, // alias for overdueItems
+        progressPercent,
+        nextDue: sp.next_due || null,
+        nextDueDate: sp.next_due || null, // alias for nextDue
+        status,
+      };
+    });
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error listing supplier projects with progress:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplatesDuplicate(_event: any, id: number): APIResponse<ActivityTemplate> {
+  try {
+    const original = queryOne('SELECT * FROM activity_templates WHERE id = ?', [id]);
+    if (!original) {
+      return createErrorResponse(`Activity template not found: ${id}`);
+    }
+
+    // Create duplicate template
+    const result = run(
+      `INSERT INTO activity_templates (name, description, category, updated_at)
+       VALUES (?, ?, ?, datetime('now'))`,
+      [`${original.name} (Copy)`, original.description, original.category]
+    );
+
+    // Copy schedule items
+    const scheduleItems = query(
+      'SELECT * FROM activity_template_schedule_items WHERE activity_template_id = ? ORDER BY id',
+      [id]
+    );
+
+    const oldToNewIdMap = new Map<number, number>();
+
+    // First pass: create items without anchor refs
+    for (const item of scheduleItems) {
+      const itemResult = run(
+        `INSERT INTO activity_template_schedule_items
+         (activity_template_id, kind, name, anchor_type, anchor_ref_id, offset_days)
+         VALUES (?, ?, ?, ?, NULL, ?)`,
+        [result.lastInsertRowid, (item as any).kind, (item as any).name, (item as any).anchor_type, (item as any).offset_days]
+      );
+      oldToNewIdMap.set((item as any).id, itemResult.lastInsertRowid);
+    }
+
+    // Second pass: update anchor refs
+    for (const item of scheduleItems) {
+      if ((item as any).anchor_ref_id) {
+        const newId = oldToNewIdMap.get((item as any).id);
+        const newAnchorRefId = oldToNewIdMap.get((item as any).anchor_ref_id);
+        if (newId && newAnchorRefId) {
+          run('UPDATE activity_template_schedule_items SET anchor_ref_id = ? WHERE id = ?', [
+            newAnchorRefId,
+            newId,
+          ]);
+        }
+      }
+    }
+
+    const template = queryOne('SELECT * FROM activity_templates WHERE id = ?', [
+      result.lastInsertRowid,
+    ]);
+
+    return createSuccessResponse(toCamelCase<ActivityTemplate>(template));
+  } catch (error) {
+    console.error('Error duplicating activity template:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -1626,6 +2158,24 @@ export function registerHandlers(): void {
   ipcMain.handle('projects:preview-propagation', handleProjectsPreviewPropagation);
   ipcMain.handle('projects:propagate-changes', handleProjectsPropagateChanges);
   ipcMain.handle('audit:list', handleAuditList);
+
+  // Phase 5: Settings
+  ipcMain.handle('settings:get-all', handleSettingsGetAll);
+  ipcMain.handle('settings:update', handleSettingsUpdate);
+
+  // Phase 5: Dashboard
+  ipcMain.handle('dashboard:get-data', handleDashboardGetData);
+
+  // Phase 5: Reports
+  ipcMain.handle('reports:get-overview', handleReportsGetOverview);
+  ipcMain.handle('reports:get-supplier-progress', handleReportsGetSupplierProgress);
+
+  // Phase 5: Enhanced list handlers with stats
+  ipcMain.handle('suppliers:list-with-stats', handleSuppliersListWithStats);
+  ipcMain.handle('projects:list-with-stats', handleProjectsListWithStats);
+  ipcMain.handle('activity-templates:list-with-counts', handleActivityTemplatesListWithCounts);
+  ipcMain.handle('supplier-projects:list-by-supplier-with-progress', handleSupplierProjectsListBySupplierWithProgress);
+  ipcMain.handle('activity-templates:duplicate', handleActivityTemplatesDuplicate);
 
   console.log('✓ All IPC handlers registered');
 }

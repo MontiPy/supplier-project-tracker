@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, FolderKanban, Library, Package, CircleHelp } from 'lucide-react';
+import { Home, Users, FolderKanban, Library, Package, BarChart3, Settings, CircleHelp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [
@@ -8,11 +8,23 @@ const navigation = [
   { name: 'Projects', href: '/projects', icon: FolderKanban },
   { name: 'Activity Library', href: '/activity-library', icon: Library },
   { name: 'Parts', href: '/parts', icon: Package },
+  { name: 'Reports', href: '/reports', icon: BarChart3 },
+];
+
+const bottomNav = [
+  { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Help', href: '/help', icon: CircleHelp },
 ];
 
 export function Sidebar() {
   const location = useLocation();
+
+  function isActive(href: string) {
+    if (href === '/') {
+      return location.pathname === '/';
+    }
+    return location.pathname.startsWith(href);
+  }
 
   return (
     <div className="flex h-full w-64 flex-col border-r bg-card">
@@ -21,14 +33,14 @@ export function Sidebar() {
       </div>
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navigation.map((item) => {
-          const isActive = location.pathname === item.href;
+          const active = isActive(item.href);
           return (
             <Link
               key={item.name}
               to={item.href}
               className={cn(
                 'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                isActive
+                active
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               )}
@@ -39,10 +51,25 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="border-t p-4">
-        <div className="text-xs text-muted-foreground">
-          Phase 1: Core CRUD
-        </div>
+      <div className="border-t px-3 py-4 space-y-1">
+        {bottomNav.map((item) => {
+          const active = isActive(item.href);
+          return (
+            <Link
+              key={item.name}
+              to={item.href}
+              className={cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                active
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              )}
+            >
+              <item.icon className="h-5 w-5" />
+              {item.name}
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

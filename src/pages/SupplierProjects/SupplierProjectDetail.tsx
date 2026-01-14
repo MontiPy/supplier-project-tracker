@@ -1,12 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Calendar, Flag, Lock, LockOpen } from 'lucide-react';
+import { ChevronDown, ChevronRight, Lock, LockOpen, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Breadcrumb } from '@/components/ui/breadcrumb';
+import { VersionBadge, RankBadge, StatusBadge, TypeBadge } from '@/components/ui/status-badge';
 import type {
   SupplierProjectDetail,
   SupplierProjectActivityDetail,
   SupplierScheduleItemDetail,
+  SupplierProject,
 } from '@shared/types';
 
 export function SupplierProjectDetailPage() {
@@ -15,10 +34,12 @@ export function SupplierProjectDetailPage() {
   const [detail, setDetail] = useState<SupplierProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedActivities, setExpandedActivities] = useState<Set<number>>(new Set());
+  const [allSupplierProjects, setAllSupplierProjects] = useState<SupplierProject[]>([]);
 
   useEffect(() => {
     if (id) {
       loadDetail();
+      loadAllSupplierProjects();
     }
   }, [id]);
 
@@ -30,6 +51,13 @@ export function SupplierProjectDetailPage() {
       setExpandedActivities(new Set(response.data.activities.map((activity) => activity.id)));
     }
     setLoading(false);
+  }
+
+  async function loadAllSupplierProjects() {
+    const response = await window.sqts.supplierProjects.list();
+    if (response.success && response.data) {
+      setAllSupplierProjects(response.data);
+    }
   }
 
   if (loading) {
@@ -61,31 +89,126 @@ export function SupplierProjectDetailPage() {
     setExpandedActivities(next);
   }
 
+  // Filter to only show supplier projects for the same project
+  const sameProjectSuppliers = allSupplierProjects.filter(
+    (sp) => sp.projectId === detail.projectId
+  );
+
+  const summary = useMemo(() => {
+    const items = detail.activities.flatMap((activity) => activity.scheduleItems);
+    const total = items.length;
+    const complete = items.filter((item) => item.status === 'Complete').length;
+    const today = new Date();
+    const overdue = items.filter((item) => {
+      if (!item.plannedDate || item.status === 'Complete') {
+        return false;
+      }
+      const planned = new Date(`${item.plannedDate}T00:00:00`);
+      return planned < today;
+    }).length;
+    const nextDueItem = items
+      .filter((item) => item.plannedDate && item.status !== 'Complete')
+      .sort((a, b) => (a.plannedDate || '').localeCompare(b.plannedDate || ''))[0];
+    const progressPercent = total === 0 ? 0 : Math.round((complete / total) * 100);
+    return {
+      total,
+      complete,
+      overdue,
+      nextDue: nextDueItem?.plannedDate || '-',
+      progressPercent,
+      statusLabel: overdue > 0 ? 'At Risk' : progressPercent === 100 ? 'Complete' : 'On Track',
+    };
+  }, [detail.activities]);
+
   return (
     <div className="p-8">
+      <Breadcrumb
+        items={[
+          { label: 'Suppliers', href: '/suppliers' },
+          { label: detail.supplierName, href: `/suppliers/${detail.supplierId}` },
+          { label: detail.projectName },
+        ]}
+      />
+
       <div className="mb-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-3xl font-bold">
-              {detail.supplierName} - {detail.projectName}{' '}
-              <span className="text-gray-500">v{detail.projectVersion}</span>
-            </h1>
-            <p className="text-gray-600 mt-1">
-              Supplier Anchor: {detail.supplierAnchorDate || '-'} | Project Anchor:{' '}
-              {detail.projectAnchorDate || '-'}
-            </p>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-3xl font-bold">{detail.projectName}</h1>
+              <VersionBadge version={detail.projectVersion} />
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <RankBadge rank={detail.nmrRank || null} />
+              {detail.nmrRank && <span>•</span>}
+              <span>Supplier: {detail.supplierName}</span>
+              {detail.activities[0]?.activityTemplateName && (
+                <>
+                  <span>•</span>
+                  <span>Activity: {detail.activities[0].activityTemplateName}</span>
+                </>
+              )}
+            </div>
           </div>
-          <Button onClick={() => navigate(`/suppliers/${detail.supplierId}`)} variant="outline">
-            Back to Supplier
-          </Button>
+          <div className="flex items-center gap-4">
+            {sameProjectSuppliers.length > 1 && (
+              <Select
+                value={String(detail.id)}
+                onValueChange={(value: string) => navigate(`/supplier-projects/${value}`)}
+              >
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {sameProjectSuppliers.map((sp) => (
+                    <SelectItem key={sp.id} value={String(sp.id)}>
+                      {sp.supplierName || `Supplier ${sp.supplierId}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Inline Summary Row */}
+      <div className="mb-6 flex flex-wrap items-center gap-6 p-4 bg-muted/50 rounded-lg">
+        <div className="flex items-center gap-3">
+          <div className="text-sm text-muted-foreground">Progress</div>
+          <div className="flex items-center gap-2">
+            <div className="w-24 h-2 rounded bg-gray-200">
+              <div
+                className="h-2 rounded bg-green-600"
+                style={{ width: `${summary.progressPercent}%` }}
+              />
+            </div>
+            <span className="text-sm font-medium">{summary.progressPercent}%</span>
+          </div>
+          <span className="text-sm text-muted-foreground">
+            ({summary.complete} of {summary.total})
+          </span>
+        </div>
+        <div className="h-6 w-px bg-border" />
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Overdue:</span>
+          <span className={`text-sm font-medium ${summary.overdue > 0 ? 'text-red-600' : ''}`}>
+            {summary.overdue}
+          </span>
+        </div>
+        <div className="h-6 w-px bg-border" />
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Next Due:</span>
+          <span className="text-sm font-medium">{summary.nextDue}</span>
+        </div>
+        <div className="h-6 w-px bg-border" />
+        <StatusBadge status={summary.statusLabel} size="sm" />
       </div>
 
       <div className="space-y-4">
         {detail.activities.length === 0 ? (
           <Card>
             <CardContent className="pt-6">
-              <div className="text-center text-gray-500">No activities created.</div>
+              <div className="text-center text-muted-foreground">No activities created.</div>
             </CardContent>
           </Card>
         ) : (
@@ -100,6 +223,22 @@ export function SupplierProjectDetailPage() {
           ))
         )}
       </div>
+
+      {/* Help Footer */}
+      <div className="mt-8 p-4 border rounded-lg bg-muted/30">
+        <div className="flex items-start gap-3">
+          <Info className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <h4 className="font-medium mb-1">What can I edit vs what is inherited?</h4>
+            <ul className="text-sm text-muted-foreground space-y-1">
+              <li><strong>Inherited from Project:</strong> Planned dates are calculated from the project schedule and propagate automatically.</li>
+              <li><strong>Editable:</strong> Actual dates, status, and notes are tracked at the supplier level.</li>
+              <li><strong>Lock:</strong> Prevents all changes and protects against propagation updates.</li>
+              <li><strong>Override:</strong> Marks the planned date as manually set, preventing propagation updates to this date.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -112,21 +251,59 @@ interface SupplierActivityCardProps {
 }
 
 function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: SupplierActivityCardProps) {
+  const [activeFilter, setActiveFilter] = useState<'all' | 'incomplete' | 'dueSoon' | 'overdue'>(
+    'all'
+  );
+  const today = new Date();
+  const filteredItems = activity.scheduleItems.filter((item) => {
+    if (activeFilter === 'all') {
+      return true;
+    }
+    if (activeFilter === 'incomplete') {
+      return item.status !== 'Complete';
+    }
+    if (!item.plannedDate || item.status === 'Complete') {
+      return false;
+    }
+    const planned = new Date(`${item.plannedDate}T00:00:00`);
+    if (activeFilter === 'overdue') {
+      return planned < today;
+    }
+    if (activeFilter === 'dueSoon') {
+      const diffDays = (planned.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+      return diffDays >= 0 && diffDays <= 14;
+    }
+    return true;
+  });
+
+  const completedCount = activity.scheduleItems.filter(i => i.status === 'Complete').length;
+  const totalCount = activity.scheduleItems.length;
+  const activityStatus = completedCount === totalCount && totalCount > 0
+    ? 'Complete'
+    : completedCount > 0
+    ? 'In Progress'
+    : 'Not Started';
+
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 flex-1">
-            <button onClick={onToggle} className="hover:bg-gray-100 p-1 rounded">
+            <button onClick={onToggle} className="hover:bg-muted p-1 rounded">
               {expanded ? (
                 <ChevronDown className="h-5 w-5" />
               ) : (
                 <ChevronRight className="h-5 w-5" />
               )}
             </button>
-            <div>
-              <CardTitle>{activity.activityTemplateName}</CardTitle>
-              <CardDescription>{activity.status}</CardDescription>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <CardTitle>{activity.activityTemplateName}</CardTitle>
+                <StatusBadge status={activityStatus} size="sm" />
+              </div>
+              <CardDescription>
+                {completedCount} of {totalCount} items complete
+              </CardDescription>
             </div>
           </div>
         </div>
@@ -135,12 +312,71 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
       {expanded && (
         <CardContent>
           {activity.scheduleItems.length === 0 ? (
-            <div className="text-center text-gray-500 py-4">No schedule items yet.</div>
+            <div className="text-center text-muted-foreground py-4">No schedule items yet.</div>
           ) : (
-            <div className="space-y-2">
-              {activity.scheduleItems.map((item) => (
-                <SupplierScheduleItemRow key={item.id} item={item} onUpdate={onUpdate} />
-              ))}
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Show:</span>
+                <Button
+                  size="sm"
+                  variant={activeFilter === 'all' ? 'default' : 'ghost'}
+                  onClick={() => setActiveFilter('all')}
+                >
+                  All ({activity.scheduleItems.length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={activeFilter === 'incomplete' ? 'default' : 'ghost'}
+                  onClick={() => setActiveFilter('incomplete')}
+                >
+                  Incomplete (
+                  {activity.scheduleItems.filter((item) => item.status !== 'Complete').length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={activeFilter === 'dueSoon' ? 'default' : 'ghost'}
+                  onClick={() => setActiveFilter('dueSoon')}
+                >
+                  Due Soon (14d)
+                </Button>
+                <Button
+                  size="sm"
+                  variant={activeFilter === 'overdue' ? 'default' : 'ghost'}
+                  onClick={() => setActiveFilter('overdue')}
+                >
+                  Overdue (
+                  {
+                    activity.scheduleItems.filter((item) => {
+                      if (!item.plannedDate || item.status === 'Complete') {
+                        return false;
+                      }
+                      const planned = new Date(`${item.plannedDate}T00:00:00`);
+                      return planned < today;
+                    }).length
+                  }
+                  )
+                </Button>
+              </div>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">Type</TableHead>
+                      <TableHead>Item</TableHead>
+                      <TableHead>Planned Date</TableHead>
+                      <TableHead>Actual Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Flags</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredItems.map((item) => (
+                      <SupplierScheduleItemRow key={item.id} item={item} onUpdate={onUpdate} />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </CardContent>
@@ -155,9 +391,17 @@ interface SupplierScheduleItemRowProps {
 }
 
 function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProps) {
-  const isMilestone = item.kind === 'MILESTONE';
   const [locked, setLocked] = useState(item.locked || false);
   const [plannedDateOverride, setPlannedDateOverride] = useState(item.plannedDateOverride || false);
+  const [actualDate, setActualDate] = useState(item.actualDate || '');
+  const [status, setStatus] = useState(item.status);
+
+  useEffect(() => {
+    setLocked(item.locked || false);
+    setPlannedDateOverride(item.plannedDateOverride || false);
+    setActualDate(item.actualDate || '');
+    setStatus(item.status);
+  }, [item.id, item.locked, item.plannedDateOverride, item.actualDate, item.status]);
 
   async function handleToggleLock() {
     const newLocked = !locked;
@@ -189,58 +433,102 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
     }
   }
 
-  // Determine styling based on locked/override state
-  const baseClasses = "flex items-center gap-4 p-3 border rounded-lg";
-  const stateClasses = locked
-    ? "bg-gray-100 border-gray-300"
-    : plannedDateOverride
-    ? "border-blue-400 border-2"
-    : "hover:bg-gray-50";
+  async function handleStatusChange(nextStatus: SupplierScheduleItemDetail['status']) {
+    const response = await window.sqts.supplierScheduleItemInstances.update({
+      id: item.id,
+      status: nextStatus,
+    });
+    if (response.success) {
+      setStatus(nextStatus);
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to update status');
+    }
+  }
+
+  async function handleActualDateCommit(nextDate: string) {
+    const response = await window.sqts.supplierScheduleItemInstances.update({
+      id: item.id,
+      actualDate: nextDate === '' ? undefined : nextDate,
+    });
+    if (response.success) {
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to update actual date');
+    }
+  }
+
+  async function handleMarkComplete() {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayValue = `${yyyy}-${mm}-${dd}`;
+    const response = await window.sqts.supplierScheduleItemInstances.update({
+      id: item.id,
+      status: 'Complete',
+      actualDate: item.actualDate || todayValue,
+    });
+    if (response.success) {
+      setStatus('Complete');
+      setActualDate(item.actualDate || todayValue);
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to complete item');
+    }
+  }
 
   return (
-    <div className={`${baseClasses} ${stateClasses}`}>
-      <div className="flex-shrink-0">
-        {isMilestone ? (
-          <Flag className="h-5 w-5 text-blue-600" />
-        ) : (
-          <Calendar className="h-5 w-5 text-green-600" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{item.name}</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
-            {isMilestone ? 'Milestone' : 'Task'}
-          </span>
+    <TableRow className={locked ? 'bg-muted/50' : undefined}>
+      <TableCell>
+        <TypeBadge kind={item.kind} />
+      </TableCell>
+      <TableCell className="font-medium">{item.name}</TableCell>
+      <TableCell>{item.plannedDate || '-'}</TableCell>
+      <TableCell>
+        <Input
+          type="date"
+          value={actualDate}
+          onChange={(e) => setActualDate(e.target.value)}
+          onBlur={() => handleActualDateCommit(actualDate)}
+          disabled={locked}
+          className="w-36"
+        />
+      </TableCell>
+      <TableCell>
+        <StatusBadge status={status} size="sm" />
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-wrap gap-1">
           {locked && (
-            <span className="text-xs px-2 py-0.5 rounded bg-red-100 text-red-700">
-              Locked
-            </span>
+            <span className="rounded bg-red-100 px-2 py-1 text-xs text-red-700">Locked</span>
           )}
           {plannedDateOverride && (
-            <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-              Overridden
+            <span className="rounded bg-blue-100 px-2 py-1 text-xs text-blue-700">
+              Override
             </span>
           )}
         </div>
-        <div className="text-sm text-gray-600 mt-1">
-          Status: {item.status}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-6">
-        <div className="text-right">
-          <div className="text-sm text-gray-500">Planned</div>
-          <div className="font-medium">{item.plannedDate || '-'}</div>
-        </div>
-        <div className="text-right">
-          <div className="text-sm text-gray-500">Actual</div>
-          <div className="font-medium">{item.actualDate || '-'}</div>
-        </div>
-
-        {/* Override Controls */}
-        <div className="flex items-center gap-2">
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex items-center justify-end gap-2">
+          {status !== 'Complete' && (
+            <Button size="sm" variant="outline" onClick={handleMarkComplete} disabled={locked}>
+              Complete
+            </Button>
+          )}
+          <select
+            className="h-8 rounded-md border bg-transparent px-2 text-xs"
+            value={status}
+            onChange={(e) => handleStatusChange(e.target.value as SupplierScheduleItemDetail['status'])}
+            disabled={locked}
+          >
+            <option value="Not Started">Not Started</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Blocked">Blocked</option>
+            <option value="Complete">Complete</option>
+            <option value="Not Required">Not Required</option>
+          </select>
           <div className="flex items-center gap-1">
             <input
               type="checkbox"
@@ -248,15 +536,12 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
               checked={plannedDateOverride}
               onChange={handleToggleOverride}
               className="cursor-pointer"
+              disabled={locked}
             />
-            <label
-              htmlFor={`override-${item.id}`}
-              className="text-xs text-gray-600 cursor-pointer"
-            >
+            <label htmlFor={`override-${item.id}`} className="text-xs text-muted-foreground">
               Override
             </label>
           </div>
-
           <Button
             onClick={handleToggleLock}
             size="sm"
@@ -266,11 +551,11 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
             {locked ? (
               <Lock className="h-4 w-4 text-red-500" />
             ) : (
-              <LockOpen className="h-4 w-4 text-gray-500" />
+              <LockOpen className="h-4 w-4 text-muted-foreground" />
             )}
           </Button>
         </div>
-      </div>
-    </div>
+      </TableCell>
+    </TableRow>
   );
 }

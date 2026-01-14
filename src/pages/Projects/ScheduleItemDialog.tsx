@@ -94,7 +94,7 @@ export default function ScheduleItemDialog({
       kind,
       name: name.trim(),
       anchorType,
-      anchorRefId: anchorType === 'SCHEDULE_ITEM' ? anchorRefId : undefined,
+      anchorRefId: anchorType === 'SCHEDULE_ITEM' && anchorRefId !== null ? anchorRefId : undefined,
       offsetDays: anchorType !== 'FIXED_DATE' ? offsetDays : undefined,
       fixedDate: anchorType === 'FIXED_DATE' ? fixedDate : undefined,
     });
