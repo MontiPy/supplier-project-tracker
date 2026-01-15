@@ -19,9 +19,16 @@ import type {
   UpdateScheduleItemParams,
   CreateActivityTemplateScheduleItemParams,
   UpdateActivityTemplateScheduleItemParams,
+  ActivityTemplateApplicability,
+  ActivityTemplateApplicabilityRule,
+  ActivityTemplateApplicabilityClause,
+  UpsertActivityTemplateApplicabilityRuleParams,
+  CreateActivityTemplateApplicabilityClauseParams,
+  UpdateActivityTemplateApplicabilityClauseParams,
   SyncProjectActivityFromTemplateParams,
   UpdateSupplierActivityInstanceParams,
   UpdateSupplierScheduleItemInstanceParams,
+  CreateSupplierActivityAttachmentParams,
   ProjectActivityDetail,
   ProjectDetail,
   ScheduleItemWithDates,
@@ -31,6 +38,7 @@ import type {
   SupplierProjectSummary,
   SupplierActivityInstance,
   SupplierScheduleItemInstance,
+  SupplierActivityAttachment,
   Part,
   CreatePartParams,
   UpdatePartParams,
@@ -40,12 +48,15 @@ import type {
   AuditEventQuery,
   APIResponse,
   // Phase 5: Settings, Dashboard, Reports
+  FileDialogResult,
   AppSettings,
   UpdateSettingParams,
   DashboardFilters,
   DashboardData,
   ReportsOverview,
   SupplierProgress,
+  ProjectProgress,
+  ReportScheduleItem,
   SupplierWithStats,
   ProjectWithStats,
   ActivityTemplateWithCounts,
@@ -104,6 +115,26 @@ contextBridge.exposeInMainWorld('sqts', {
         ipcRenderer.invoke('activity-template-schedule-items:update', params),
       delete: (id: number): Promise<APIResponse<void>> =>
         ipcRenderer.invoke('activity-template-schedule-items:delete', id),
+    },
+    applicability: {
+      get: (activityTemplateId: number): Promise<APIResponse<ActivityTemplateApplicability>> =>
+        ipcRenderer.invoke('activity-template-applicability:get', activityTemplateId),
+      upsertRule: (
+        params: UpsertActivityTemplateApplicabilityRuleParams
+      ): Promise<APIResponse<ActivityTemplateApplicabilityRule>> =>
+        ipcRenderer.invoke('activity-template-applicability:upsert-rule', params),
+      deleteRule: (id: number): Promise<APIResponse<void>> =>
+        ipcRenderer.invoke('activity-template-applicability:delete-rule', id),
+      createClause: (
+        params: CreateActivityTemplateApplicabilityClauseParams
+      ): Promise<APIResponse<ActivityTemplateApplicabilityClause>> =>
+        ipcRenderer.invoke('activity-template-applicability:create-clause', params),
+      updateClause: (
+        params: UpdateActivityTemplateApplicabilityClauseParams
+      ): Promise<APIResponse<ActivityTemplateApplicabilityClause>> =>
+        ipcRenderer.invoke('activity-template-applicability:update-clause', params),
+      deleteClause: (id: number): Promise<APIResponse<void>> =>
+        ipcRenderer.invoke('activity-template-applicability:delete-clause', id),
     },
   },
 
@@ -187,6 +218,17 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('supplier-schedule-item-instances:update', params),
   },
 
+  supplierActivityAttachments: {
+    list: (supplierActivityInstanceId: number): Promise<APIResponse<SupplierActivityAttachment[]>> =>
+      ipcRenderer.invoke('supplier-activity-attachments:list', supplierActivityInstanceId),
+    create: (
+      params: CreateSupplierActivityAttachmentParams
+    ): Promise<APIResponse<SupplierActivityAttachment>> =>
+      ipcRenderer.invoke('supplier-activity-attachments:create', params),
+    delete: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('supplier-activity-attachments:delete', id),
+  },
+
   parts: {
     list: (supplierProjectId: number): Promise<APIResponse<Part[]>> =>
       ipcRenderer.invoke('parts:list', supplierProjectId),
@@ -209,6 +251,12 @@ contextBridge.exposeInMainWorld('sqts', {
     getAll: (): Promise<APIResponse<AppSettings>> => ipcRenderer.invoke('settings:get-all'),
     update: (params: UpdateSettingParams): Promise<APIResponse<void>> =>
       ipcRenderer.invoke('settings:update', params),
+    exportDatabase: (): Promise<APIResponse<FileDialogResult>> =>
+      ipcRenderer.invoke('settings:export-database'),
+    importDatabase: (): Promise<APIResponse<FileDialogResult>> =>
+      ipcRenderer.invoke('settings:import-database'),
+    wipeDatabase: (): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('settings:wipe-database'),
   },
 
   // Dashboard API (Phase 5)
@@ -223,6 +271,12 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('reports:get-overview'),
     getSupplierProgress: (): Promise<APIResponse<SupplierProgress[]>> =>
       ipcRenderer.invoke('reports:get-supplier-progress'),
+    getProjectProgress: (): Promise<APIResponse<ProjectProgress[]>> =>
+      ipcRenderer.invoke('reports:get-project-progress'),
+    getOverdueItems: (): Promise<APIResponse<ReportScheduleItem[]>> =>
+      ipcRenderer.invoke('reports:get-overdue-items'),
+    getDueSoonItems: (): Promise<APIResponse<ReportScheduleItem[]>> =>
+      ipcRenderer.invoke('reports:get-due-soon-items'),
   },
 });
 
@@ -258,6 +312,20 @@ export interface SQTSAPI {
         params: UpdateActivityTemplateScheduleItemParams
       ) => Promise<APIResponse<ActivityTemplateScheduleItem>>;
       delete: (id: number) => Promise<APIResponse<void>>;
+    };
+    applicability: {
+      get: (activityTemplateId: number) => Promise<APIResponse<ActivityTemplateApplicability>>;
+      upsertRule: (
+        params: UpsertActivityTemplateApplicabilityRuleParams
+      ) => Promise<APIResponse<ActivityTemplateApplicabilityRule>>;
+      deleteRule: (id: number) => Promise<APIResponse<void>>;
+      createClause: (
+        params: CreateActivityTemplateApplicabilityClauseParams
+      ) => Promise<APIResponse<ActivityTemplateApplicabilityClause>>;
+      updateClause: (
+        params: UpdateActivityTemplateApplicabilityClauseParams
+      ) => Promise<APIResponse<ActivityTemplateApplicabilityClause>>;
+      deleteClause: (id: number) => Promise<APIResponse<void>>;
     };
   };
   projects: {
@@ -306,6 +374,13 @@ export interface SQTSAPI {
       params: UpdateSupplierScheduleItemInstanceParams
     ) => Promise<APIResponse<SupplierScheduleItemInstance>>;
   };
+  supplierActivityAttachments: {
+    list: (supplierActivityInstanceId: number) => Promise<APIResponse<SupplierActivityAttachment[]>>;
+    create: (
+      params: CreateSupplierActivityAttachmentParams
+    ) => Promise<APIResponse<SupplierActivityAttachment>>;
+    delete: (id: number) => Promise<APIResponse<void>>;
+  };
   parts: {
     list: (supplierProjectId: number) => Promise<APIResponse<Part[]>>;
     create: (params: CreatePartParams) => Promise<APIResponse<Part>>;
@@ -318,6 +393,9 @@ export interface SQTSAPI {
   settings: {
     getAll: () => Promise<APIResponse<AppSettings>>;
     update: (params: UpdateSettingParams) => Promise<APIResponse<void>>;
+    exportDatabase: () => Promise<APIResponse<FileDialogResult>>;
+    importDatabase: () => Promise<APIResponse<FileDialogResult>>;
+    wipeDatabase: () => Promise<APIResponse<void>>;
   };
   dashboard: {
     getData: (filters: DashboardFilters) => Promise<APIResponse<DashboardData>>;
@@ -325,6 +403,9 @@ export interface SQTSAPI {
   reports: {
     getOverview: () => Promise<APIResponse<ReportsOverview>>;
     getSupplierProgress: () => Promise<APIResponse<SupplierProgress[]>>;
+    getProjectProgress: () => Promise<APIResponse<ProjectProgress[]>>;
+    getOverdueItems: () => Promise<APIResponse<ReportScheduleItem[]>>;
+    getDueSoonItems: () => Promise<APIResponse<ReportScheduleItem[]>>;
   };
 }
 

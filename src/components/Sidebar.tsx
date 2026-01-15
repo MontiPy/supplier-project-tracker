@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, FolderKanban, Library, BarChart3, Settings } from 'lucide-react';
+import { Home, Users, FolderKanban, Library, Package, BarChart3, Settings, HelpCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [
@@ -7,8 +7,10 @@ const navigation = [
   { name: 'Suppliers', href: '/suppliers', icon: Users },
   { name: 'Projects', href: '/projects', icon: FolderKanban },
   { name: 'Activity Library', href: '/activity-library', icon: Library },
+  { name: 'Parts', href: '/parts', icon: Package },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
   { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Help', href: '/help', icon: HelpCircle },
 ];
 
 export function Sidebar() {

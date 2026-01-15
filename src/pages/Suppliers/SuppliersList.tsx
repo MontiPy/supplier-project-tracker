@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { RankBadge, StatusBadge } from '@/components/ui/status-badge';
+import { StatusBadge } from '@/components/ui/status-badge';
 import type { SupplierWithStats, CreateSupplierParams } from '@shared/types';
 
 export function SuppliersList() {
@@ -28,9 +28,9 @@ export function SuppliersList() {
   const [suppliers, setSuppliers] = useState<SupplierWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState<CreateSupplierParams>({
     name: '',
-    nmrRank: '',
     notes: '',
   });
 
@@ -48,7 +48,7 @@ export function SuppliersList() {
   }
 
   function openCreateDialog() {
-    setFormData({ name: '', nmrRank: '', notes: '' });
+    setFormData({ name: '', notes: '' });
     setDialogOpen(true);
   }
 
@@ -68,6 +68,14 @@ export function SuppliersList() {
     return 'On Track';
   }
 
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredSuppliers = suppliers.filter((supplier) => {
+    if (!normalizedSearch) {
+      return true;
+    }
+    return supplier.name.toLowerCase().includes(normalizedSearch);
+  });
+
   return (
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
@@ -79,6 +87,18 @@ export function SuppliersList() {
           <Plus className="mr-2 h-4 w-4" />
           New Supplier
         </Button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Input
+          placeholder="Search suppliers..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+        <span className="text-sm text-muted-foreground">
+          {filteredSuppliers.length} of {suppliers.length}
+        </span>
       </div>
 
       {loading ? (
@@ -96,13 +116,17 @@ export function SuppliersList() {
             New Supplier
           </Button>
         </div>
+      ) : filteredSuppliers.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <p className="text-lg font-medium">No suppliers match your search</p>
+          <p className="text-sm text-muted-foreground">Try a different name.</p>
+        </div>
       ) : (
         <div className="rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Supplier Name</TableHead>
-                <TableHead>NMR Rank</TableHead>
                 <TableHead className="text-right">Active Projects</TableHead>
                 <TableHead className="text-right">Overdue</TableHead>
                 <TableHead className="text-right">Due Soon (14d)</TableHead>
@@ -111,16 +135,13 @@ export function SuppliersList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {suppliers.map((supplier) => (
+              {filteredSuppliers.map((supplier) => (
                 <TableRow
                   key={supplier.id}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => navigate(`/suppliers/${supplier.id}`)}
                 >
                   <TableCell className="font-medium">{supplier.name}</TableCell>
-                  <TableCell>
-                    <RankBadge rank={supplier.nmrRank} />
-                  </TableCell>
                   <TableCell className="text-right">{supplier.activeProjects}</TableCell>
                   <TableCell className="text-right">
                     {supplier.overdueCount > 0 ? (
@@ -180,15 +201,6 @@ export function SuppliersList() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   required
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="nmrRank">NMR Rank</Label>
-                <Input
-                  id="nmrRank"
-                  value={formData.nmrRank}
-                  onChange={(e) => setFormData({ ...formData, nmrRank: e.target.value })}
-                  placeholder="e.g., A1, B2, C1"
                 />
               </div>
               <div className="grid gap-2">

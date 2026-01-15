@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
   Table,
   TableBody,
@@ -28,11 +29,16 @@ import type {
   ActivityTemplateWithCounts,
   ActivityTemplate,
   ActivityTemplateScheduleItem,
+  ActivityTemplateApplicabilityRule,
+  ActivityTemplateApplicabilityClause,
   CreateActivityTemplateParams,
   UpdateActivityTemplateParams,
   CreateActivityTemplateScheduleItemParams,
   UpdateActivityTemplateScheduleItemParams,
   AnchorType,
+  ApplicabilityOperator,
+  ApplicabilitySubject,
+  ApplicabilityComparator,
 } from '@shared/types';
 
 const anchorTypes: AnchorType[] = [
@@ -41,6 +47,20 @@ const anchorTypes: AnchorType[] = [
   'SUPPLIER_ANCHOR',
   'SCHEDULE_ITEM',
   'COMPLETION',
+];
+
+const applicabilitySubjects: { value: ApplicabilitySubject; label: string }[] = [
+  { value: 'SUPPLIER_NMR', label: 'Project NMR Rank' },
+  { value: 'PART_PA', label: 'Part PA Rank' },
+];
+
+const applicabilityComparators: { value: ApplicabilityComparator; label: string }[] = [
+  { value: 'IN', label: 'In list' },
+  { value: 'NOT_IN', label: 'Not in list' },
+  { value: 'EQ', label: 'Equals' },
+  { value: 'NEQ', label: 'Not equals' },
+  { value: 'GTE', label: 'At least' },
+  { value: 'LTE', label: 'At most' },
 ];
 
 function validateScheduleItems(items: ActivityTemplateScheduleItem[]): string[] {
@@ -88,6 +108,7 @@ export function ActivityLibraryPage() {
   // Template list state
   const [templates, setTemplates] = useState<ActivityTemplateWithCounts[]>([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [templateSearch, setTemplateSearch] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ActivityTemplateWithCounts | null>(null);
@@ -114,6 +135,21 @@ export function ActivityLibraryPage() {
     anchorRefId: undefined,
     offsetDays: undefined,
   });
+  const [applicabilityRule, setApplicabilityRule] =
+    useState<ActivityTemplateApplicabilityRule | null>(null);
+  const [applicabilityClauses, setApplicabilityClauses] = useState<
+    ActivityTemplateApplicabilityClause[]
+  >([]);
+  const [loadingApplicability, setLoadingApplicability] = useState(false);
+  const [newClause, setNewClause] = useState<{
+    subjectType: ApplicabilitySubject;
+    comparator: ApplicabilityComparator;
+    value: string;
+  }>({
+    subjectType: 'SUPPLIER_NMR',
+    comparator: 'IN',
+    value: '',
+  });
 
   const milestones = items.filter((item) => item.kind === 'MILESTONE');
   const itemById = new Map(items.map((item) => [item.id, item] as const));
@@ -135,6 +171,17 @@ export function ActivityLibraryPage() {
         !milestoneIds.has(item.anchorRefId))
   );
 
+  const normalizedTemplateSearch = templateSearch.trim().toLowerCase();
+  const filteredTemplates = templates.filter((template) => {
+    if (!normalizedTemplateSearch) {
+      return true;
+    }
+    return (
+      template.name.toLowerCase().includes(normalizedTemplateSearch) ||
+      (template.category || '').toLowerCase().includes(normalizedTemplateSearch)
+    );
+  });
+
   useEffect(() => {
     loadTemplates();
   }, []);
@@ -145,6 +192,8 @@ export function ActivityLibraryPage() {
     } else {
       setTemplate(null);
       setItems([]);
+      setApplicabilityRule(null);
+      setApplicabilityClauses([]);
     }
   }, [selectedId]);
 
@@ -159,15 +208,23 @@ export function ActivityLibraryPage() {
 
   async function loadTemplateDetail(id: number) {
     setLoadingDetail(true);
-    const [templateRes, itemsRes] = await Promise.all([
+    const [templateRes, itemsRes, applicabilityRes] = await Promise.all([
       window.sqts.activityTemplates.get(id),
       window.sqts.activityTemplates.scheduleItems.list(id),
+      window.sqts.activityTemplates.applicability.get(id),
     ]);
     if (templateRes.success && templateRes.data) {
       setTemplate(templateRes.data);
     }
     if (itemsRes.success && itemsRes.data) {
       setItems(itemsRes.data);
+    }
+    if (applicabilityRes.success && applicabilityRes.data) {
+      setApplicabilityRule(applicabilityRes.data.rule);
+      setApplicabilityClauses(applicabilityRes.data.clauses);
+    } else {
+      setApplicabilityRule(null);
+      setApplicabilityClauses([]);
     }
     setLoadingDetail(false);
   }
@@ -258,6 +315,134 @@ export function ActivityLibraryPage() {
       return;
     }
     alert('Validation passed. No issues found.');
+  }
+
+  async function ensureApplicabilityRule(): Promise<ActivityTemplateApplicabilityRule | null> {
+    if (!template) {
+      return null;
+    }
+    if (applicabilityRule) {
+      return applicabilityRule;
+    }
+    setLoadingApplicability(true);
+    const response = await window.sqts.activityTemplates.applicability.upsertRule({
+      activityTemplateId: template.id,
+      operator: 'ALL',
+      enabled: true,
+    });
+    setLoadingApplicability(false);
+    if (response.success && response.data) {
+      setApplicabilityRule(response.data);
+      return response.data;
+    }
+    alert(response.error || 'Failed to create applicability rule');
+    return null;
+  }
+
+  async function handleApplicabilityRuleChange(next: {
+    operator?: ApplicabilityOperator;
+    enabled?: boolean;
+  }) {
+    if (!template) {
+      return;
+    }
+    setLoadingApplicability(true);
+    const response = await window.sqts.activityTemplates.applicability.upsertRule({
+      activityTemplateId: template.id,
+      operator: next.operator ?? applicabilityRule?.operator ?? 'ALL',
+      enabled: next.enabled ?? applicabilityRule?.enabled ?? true,
+    });
+    setLoadingApplicability(false);
+    if (response.success && response.data) {
+      setApplicabilityRule(response.data);
+    } else {
+      alert(response.error || 'Failed to update applicability rule');
+    }
+  }
+
+  async function handleAddClause(e: React.FormEvent) {
+    e.preventDefault();
+    const rule = await ensureApplicabilityRule();
+    if (!rule) {
+      return;
+    }
+    const trimmedValue = newClause.value.trim();
+    if (trimmedValue === '') {
+      alert('Clause value is required');
+      return;
+    }
+    setLoadingApplicability(true);
+    const response = await window.sqts.activityTemplates.applicability.createClause({
+      ruleId: rule.id,
+      subjectType: newClause.subjectType,
+      comparator: newClause.comparator,
+      value: trimmedValue,
+    });
+    setLoadingApplicability(false);
+    if (!response.success) {
+      alert(response.error || 'Failed to add clause');
+      return;
+    }
+    if (!response.data) {
+      alert('Failed to add clause');
+      return;
+    }
+    const createdClause = response.data as ActivityTemplateApplicabilityClause;
+    setApplicabilityClauses((prev) => [...prev, createdClause]);
+    setNewClause({ ...newClause, value: '' });
+  }
+
+  async function handleUpdateClause(
+    clauseId: number,
+    next: Partial<ActivityTemplateApplicabilityClause>
+  ) {
+    setLoadingApplicability(true);
+    const response = await window.sqts.activityTemplates.applicability.updateClause({
+      id: clauseId,
+      subjectType: next.subjectType,
+      comparator: next.comparator,
+      value: next.value,
+    });
+    setLoadingApplicability(false);
+    if (response.success && response.data) {
+      const updatedClause = response.data;
+      setApplicabilityClauses((prev) =>
+        prev.map((clause) => (clause.id === clauseId ? updatedClause : clause))
+      );
+    } else {
+      alert(response.error || 'Failed to update clause');
+    }
+  }
+
+  async function handleDeleteClause(clauseId: number) {
+    setLoadingApplicability(true);
+    const response = await window.sqts.activityTemplates.applicability.deleteClause(clauseId);
+    setLoadingApplicability(false);
+    if (response.success) {
+      setApplicabilityClauses((prev) => prev.filter((clause) => clause.id !== clauseId));
+    } else {
+      alert(response.error || 'Failed to delete clause');
+    }
+  }
+
+  async function handleResetApplicabilityRule() {
+    if (!applicabilityRule) {
+      return;
+    }
+    if (!confirm('Remove all applicability rules for this template?')) {
+      return;
+    }
+    setLoadingApplicability(true);
+    const response = await window.sqts.activityTemplates.applicability.deleteRule(
+      applicabilityRule.id
+    );
+    setLoadingApplicability(false);
+    if (response.success) {
+      setApplicabilityRule(null);
+      setApplicabilityClauses([]);
+    } else {
+      alert(response.error || 'Failed to delete applicability rule');
+    }
   }
 
   // Schedule Item CRUD
@@ -412,6 +597,15 @@ export function ActivityLibraryPage() {
             <Plus className="mr-2 h-4 w-4" />
             New Activity Template
           </Button>
+          <Input
+            className="mt-4"
+            placeholder="Search templates..."
+            value={templateSearch}
+            onChange={(e) => setTemplateSearch(e.target.value)}
+          />
+          <div className="mt-2 text-xs text-muted-foreground">
+            {filteredTemplates.length} of {templates.length}
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {loadingList ? (
@@ -420,9 +614,13 @@ export function ActivityLibraryPage() {
             <div className="p-4 text-center text-muted-foreground">
               No templates yet. Create one to get started.
             </div>
+          ) : filteredTemplates.length === 0 ? (
+            <div className="p-4 text-center text-muted-foreground">
+              No templates match your search.
+            </div>
           ) : (
             <div className="divide-y">
-              {templates.map((t) => (
+              {filteredTemplates.map((t) => (
                 <div
                   key={t.id}
                   className={cn(
@@ -727,10 +925,219 @@ export function ActivityLibraryPage() {
 
               <TabsContent value="applicability">
                 <Card>
-                  <CardContent className="py-12">
-                    <div className="text-center text-muted-foreground">
-                      <p className="text-lg font-medium mb-2">Applicability Rules</p>
-                      <p>Define which suppliers and parts require this template.</p>
+                  <CardContent className="py-6 space-y-6">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-lg font-medium">Applicability Rules</p>
+                        <p className="text-sm text-muted-foreground">
+                          Rules control when this template is required based on project NMR or part PA ranks.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleResetApplicabilityRule}
+                        disabled={!applicabilityRule || loadingApplicability}
+                      >
+                        Clear Rules
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="applicability-enabled">Enabled</Label>
+                        <Switch
+                          id="applicability-enabled"
+                          checked={applicabilityRule?.enabled ?? false}
+                          onCheckedChange={(checked: boolean) =>
+                            handleApplicabilityRuleChange({ enabled: checked })
+                          }
+                          disabled={loadingApplicability}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="applicability-operator">Match</Label>
+                        <select
+                          id="applicability-operator"
+                          className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                          value={(applicabilityRule?.operator ?? 'ALL') as ApplicabilityOperator}
+                          onChange={(e) =>
+                            handleApplicabilityRuleChange({
+                              operator: e.target.value as ApplicabilityOperator,
+                            })
+                          }
+                          disabled={loadingApplicability}
+                        >
+                          <option value="ALL">All clauses</option>
+                          <option value="ANY">Any clause</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {applicabilityClauses.length === 0 ? (
+                      <div className="rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+                        No clauses yet. Add a clause below to start filtering.
+                      </div>
+                    ) : (
+                      <div className="rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Subject</TableHead>
+                              <TableHead>Comparator</TableHead>
+                              <TableHead>Value</TableHead>
+                              <TableHead className="text-right">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {applicabilityClauses.map((clause) => (
+                              <TableRow key={clause.id}>
+                                <TableCell>
+                                  <select
+                                    className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                                    value={clause.subjectType}
+                                    onChange={(e) => {
+                                      const nextValue = e.target.value as ApplicabilitySubject;
+                                      setApplicabilityClauses((prev) =>
+                                        prev.map((item) =>
+                                          item.id === clause.id
+                                            ? { ...item, subjectType: nextValue }
+                                            : item
+                                        )
+                                      );
+                                      handleUpdateClause(clause.id, { subjectType: nextValue });
+                                    }}
+                                    disabled={loadingApplicability}
+                                  >
+                                    {applicabilitySubjects.map((subject) => (
+                                      <option key={subject.value} value={subject.value}>
+                                        {subject.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </TableCell>
+                                <TableCell>
+                                  <select
+                                    className="h-9 rounded-md border bg-transparent px-2 text-sm"
+                                    value={clause.comparator}
+                                    onChange={(e) => {
+                                      const nextValue = e.target.value as ApplicabilityComparator;
+                                      setApplicabilityClauses((prev) =>
+                                        prev.map((item) =>
+                                          item.id === clause.id
+                                            ? { ...item, comparator: nextValue }
+                                            : item
+                                        )
+                                      );
+                                      handleUpdateClause(clause.id, { comparator: nextValue });
+                                    }}
+                                    disabled={loadingApplicability}
+                                  >
+                                    {applicabilityComparators.map((comparator) => (
+                                      <option key={comparator.value} value={comparator.value}>
+                                        {comparator.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </TableCell>
+                                <TableCell>
+                                  <Input
+                                    value={clause.value}
+                                    onChange={(e) => {
+                                      const nextValue = e.target.value;
+                                      setApplicabilityClauses((prev) =>
+                                        prev.map((item) =>
+                                          item.id === clause.id
+                                            ? { ...item, value: nextValue }
+                                            : item
+                                        )
+                                      );
+                                    }}
+                                    onBlur={(e) =>
+                                      handleUpdateClause(clause.id, { value: e.target.value })
+                                    }
+                                    placeholder='A1, B2 or ["A1","B2"]'
+                                    disabled={loadingApplicability}
+                                  />
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeleteClause(clause.id)}
+                                    disabled={loadingApplicability}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+
+                    <form onSubmit={handleAddClause} className="grid gap-4 md:grid-cols-4">
+                      <div className="grid gap-2 md:col-span-1">
+                        <Label htmlFor="newClauseSubject">Subject</Label>
+                        <select
+                          id="newClauseSubject"
+                          className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                          value={newClause.subjectType}
+                          onChange={(e) =>
+                            setNewClause({
+                              ...newClause,
+                              subjectType: e.target.value as ApplicabilitySubject,
+                            })
+                          }
+                          disabled={loadingApplicability}
+                        >
+                          {applicabilitySubjects.map((subject) => (
+                            <option key={subject.value} value={subject.value}>
+                              {subject.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-2 md:col-span-1">
+                        <Label htmlFor="newClauseComparator">Comparator</Label>
+                        <select
+                          id="newClauseComparator"
+                          className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                          value={newClause.comparator}
+                          onChange={(e) =>
+                            setNewClause({
+                              ...newClause,
+                              comparator: e.target.value as ApplicabilityComparator,
+                            })
+                          }
+                          disabled={loadingApplicability}
+                        >
+                          {applicabilityComparators.map((comparator) => (
+                            <option key={comparator.value} value={comparator.value}>
+                              {comparator.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-2 md:col-span-2">
+                        <Label htmlFor="newClauseValue">Value</Label>
+                        <Input
+                          id="newClauseValue"
+                          value={newClause.value}
+                          onChange={(e) => setNewClause({ ...newClause, value: e.target.value })}
+                          placeholder="Comma-separated or JSON array"
+                          disabled={loadingApplicability}
+                        />
+                      </div>
+                      <div className="md:col-span-4 flex justify-end">
+                        <Button type="submit" disabled={loadingApplicability}>
+                          Add Clause
+                        </Button>
+                      </div>
+                    </form>
+                    <div className="text-xs text-muted-foreground">
+                      Use comma-separated values or a JSON array for multi-value matches.
                     </div>
                   </CardContent>
                 </Card>

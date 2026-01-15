@@ -8,7 +8,6 @@
 export interface Supplier {
   id: number;
   name: string;
-  nmrRank: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -78,6 +77,7 @@ export interface SupplierProject {
   projectId: number;
   projectVersion: string;
   supplierAnchorDate: string | null;
+  supplierProjectNmrRank?: string | null;
   supplierName?: string;
   projectName?: string;
   createdAt: string;
@@ -125,6 +125,54 @@ export interface ActivityTemplateScheduleItem {
   createdAt: string;
 }
 
+export type ApplicabilityOperator = 'ALL' | 'ANY';
+export type ApplicabilitySubject = 'SUPPLIER_NMR' | 'PART_PA';
+export type ApplicabilityComparator = 'IN' | 'NOT_IN' | 'EQ' | 'NEQ' | 'GTE' | 'LTE';
+
+export interface ActivityTemplateApplicabilityRule {
+  id: number;
+  activityTemplateId: number;
+  operator: ApplicabilityOperator;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface ActivityTemplateApplicabilityClause {
+  id: number;
+  ruleId: number;
+  subjectType: ApplicabilitySubject;
+  comparator: ApplicabilityComparator;
+  value: string;
+  createdAt: string;
+}
+
+export interface ActivityTemplateApplicability {
+  rule: ActivityTemplateApplicabilityRule | null;
+  clauses: ActivityTemplateApplicabilityClause[];
+}
+
+export interface ProjectActivityDependency {
+  id: number;
+  projectActivityId: number;
+  dependsOnProjectActivityId: number;
+  createdAt: string;
+}
+
+export interface ProjectScheduleItemDependency {
+  id: number;
+  projectScheduleItemId: number;
+  dependsOnItemId: number;
+  createdAt: string;
+}
+
+export interface SupplierActivityAttachment {
+  id: number;
+  supplierActivityInstanceId: number;
+  label: string | null;
+  url: string;
+  createdAt: string;
+}
+
 export interface SupplierProjectSummary extends SupplierProject {
   supplierName: string;
   projectName: string;
@@ -144,13 +192,14 @@ export interface SupplierScheduleItemDetail extends ProjectScheduleItem {
 export interface SupplierProjectActivityDetail extends SupplierActivityInstance {
   activityTemplateName: string;
   scheduleItems: SupplierScheduleItemDetail[];
+  attachments: SupplierActivityAttachment[];
 }
 
 export interface SupplierProjectDetail extends SupplierProject {
   supplierName: string;
   projectName: string;
   projectAnchorDate: string | null;
-  nmrRank: string | null;
+  supplierProjectNmrRank?: string | null;
   activities: SupplierProjectActivityDetail[];
 }
 
@@ -189,14 +238,12 @@ export interface AuditEvent {
 // Supplier operations
 export interface CreateSupplierParams {
   name: string;
-  nmrRank?: string;
   notes?: string;
 }
 
 export interface UpdateSupplierParams {
   id: number;
   name?: string;
-  nmrRank?: string;
   notes?: string;
 }
 
@@ -288,6 +335,32 @@ export interface UpdateActivityTemplateScheduleItemParams {
   offsetDays?: number;
 }
 
+export interface UpsertActivityTemplateApplicabilityRuleParams {
+  activityTemplateId: number;
+  operator: ApplicabilityOperator;
+  enabled: boolean;
+}
+
+export interface UpdateActivityTemplateApplicabilityRuleParams {
+  id: number;
+  operator?: ApplicabilityOperator;
+  enabled?: boolean;
+}
+
+export interface CreateActivityTemplateApplicabilityClauseParams {
+  ruleId: number;
+  subjectType: ApplicabilitySubject;
+  comparator: ApplicabilityComparator;
+  value: string;
+}
+
+export interface UpdateActivityTemplateApplicabilityClauseParams {
+  id: number;
+  subjectType?: ApplicabilitySubject;
+  comparator?: ApplicabilityComparator;
+  value?: string;
+}
+
 export interface SyncProjectActivityFromTemplateParams {
   projectActivityId: number;
   applyTemplateOffsets?: boolean;
@@ -298,11 +371,13 @@ export interface ApplySupplierProjectParams {
   supplierId: number;
   projectId: number;
   supplierAnchorDate?: string;
+  supplierProjectNmrRank?: string | null;
 }
 
 export interface UpdateSupplierProjectParams {
   id: number;
   supplierAnchorDate?: string;
+  supplierProjectNmrRank?: string | null;
 }
 
 export interface UpdateSupplierActivityInstanceParams {
@@ -319,6 +394,12 @@ export interface UpdateSupplierScheduleItemInstanceParams {
   plannedDateOverride?: boolean;
   scopeOverride?: ScopeOverride;
   locked?: boolean;
+}
+
+export interface CreateSupplierActivityAttachmentParams {
+  supplierActivityInstanceId: number;
+  label?: string;
+  url: string;
 }
 
 // Parts operations
@@ -409,6 +490,11 @@ export interface Setting {
   updatedAt: string;
 }
 
+export interface FileDialogResult {
+  canceled: boolean;
+  path?: string;
+}
+
 export interface AppSettings {
   nmrRanks: string[];
   paRanks: string[];
@@ -471,12 +557,37 @@ export interface ReportsOverview {
 export interface SupplierProgress {
   supplierId: number;
   supplierName: string;
-  nmrRank: string | null;
   totalItems: number;
   completedItems: number;
   overdueItems: number;
   progressPercent: number;
   status: 'On Track' | 'At Risk' | 'Behind';
+}
+
+export interface ProjectProgress {
+  projectId: number;
+  projectName: string;
+  projectVersion: string;
+  supplierCount: number;
+  totalItems: number;
+  completedItems: number;
+  overdueItems: number;
+  progressPercent: number;
+  status: 'On Track' | 'At Risk' | 'Behind';
+}
+
+export interface ReportScheduleItem {
+  supplierScheduleItemInstanceId: number;
+  dueDate: string | null;
+  supplierId: number;
+  supplierName: string;
+  projectId: number;
+  projectName: string;
+  activityName: string;
+  itemName: string;
+  itemKind: ScheduleItemKind;
+  status: ActivityStatus;
+  daysUntilDue: number;
 }
 
 // Supplier list with stats

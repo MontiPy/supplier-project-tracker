@@ -30,6 +30,9 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [newNmrRank, setNewNmrRank] = useState('');
   const [newPaRank, setNewPaRank] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [wiping, setWiping] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -104,6 +107,63 @@ export function SettingsPage() {
     await saveSetting('use_business_days', String(defaultSettings.useBusinessDays));
   }
 
+  async function handleExportDatabase() {
+    setExporting(true);
+    const response = await window.sqts.settings.exportDatabase();
+    setExporting(false);
+    if (!response.success || !response.data) {
+      alert(response.error || 'Failed to export database');
+      return;
+    }
+    if (response.data.canceled) {
+      return;
+    }
+    alert(`Backup exported to ${response.data.path}`);
+  }
+
+  async function handleImportDatabase() {
+    const confirmed = confirm(
+      'Importing a backup will replace your current data. Continue?'
+    );
+    if (!confirmed) {
+      return;
+    }
+    setImporting(true);
+    const response = await window.sqts.settings.importDatabase();
+    setImporting(false);
+    if (!response.success || !response.data) {
+      alert(response.error || 'Failed to import database');
+      return;
+    }
+    if (response.data.canceled) {
+      return;
+    }
+    alert('Backup imported. The app will reload to reflect the new data.');
+    window.location.reload();
+  }
+
+  async function handleWipeDatabase() {
+    const confirmed = confirm(
+      'This will permanently delete all data from this app on this device. Continue?'
+    );
+    if (!confirmed) {
+      return;
+    }
+    const promptValue = prompt('Type WIPE to confirm:');
+    if (promptValue !== 'WIPE') {
+      return;
+    }
+    setWiping(true);
+    const response = await window.sqts.settings.wipeDatabase();
+    setWiping(false);
+    if (!response.success) {
+      alert(response.error || 'Failed to wipe database');
+      return;
+    }
+    alert('All data wiped. The app will reload with a fresh database.');
+    window.location.reload();
+  }
+
   if (loading) {
     return (
       <div className="p-8">
@@ -127,9 +187,9 @@ export function SettingsPage() {
         {/* NMR Rank Scale */}
         <Card>
           <CardHeader>
-            <CardTitle>Supplier NMR Rank Scale</CardTitle>
+            <CardTitle>Project NMR Rank Scale</CardTitle>
             <CardDescription>
-              Define the available NMR ranking levels for suppliers
+              Define the available NMR ranking levels for supplier projects
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -359,6 +419,53 @@ export function SettingsPage() {
                   updatePropagationSetting('useBusinessDays', checked)
                 }
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Backup and Restore */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Backup and Restore</CardTitle>
+            <CardDescription>
+              Export your database for backup or import to restore a previous snapshot.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-medium">Export Backup</p>
+                  <p className="text-sm text-muted-foreground">
+                    Save a copy of your current database to a file.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={handleExportDatabase} disabled={exporting}>
+                  {exporting ? 'Exporting...' : 'Export'}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-medium">Import Backup</p>
+                  <p className="text-sm text-muted-foreground">
+                    Replace your current data with a backup file.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={handleImportDatabase} disabled={importing}>
+                  {importing ? 'Importing...' : 'Import'}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-medium text-red-600">Nuclear Wipe</p>
+                  <p className="text-sm text-muted-foreground">
+                    Permanently delete all data and reset the database.
+                  </p>
+                </div>
+                <Button variant="destructive" onClick={handleWipeDatabase} disabled={wiping}>
+                  {wiping ? 'Wiping...' : 'Wipe All Data'}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>

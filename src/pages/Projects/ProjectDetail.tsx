@@ -117,6 +117,17 @@ export default function ProjectDetailPage() {
     });
   }
 
+  function formatPayload(payload?: string | null): string | null {
+    if (!payload) {
+      return null;
+    }
+    try {
+      return JSON.stringify(JSON.parse(payload), null, 2);
+    } catch {
+      return payload;
+    }
+  }
+
   async function handleApplyToSuppliers() {
     if (!projectDetail) {
       return;
@@ -314,9 +325,9 @@ export default function ProjectDetailPage() {
                     <div key={event.id} className="flex items-start gap-4 border-b pb-4 last:border-0">
                       <div className="flex-1">
                         <div className="font-medium">{event.action}</div>
-                        {event.details && (
+                        {formatPayload(event.payload) && (
                           <pre className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">
-                            {JSON.stringify(JSON.parse(event.details), null, 2)}
+                            {formatPayload(event.payload)}
                           </pre>
                         )}
                       </div>
@@ -345,7 +356,7 @@ export default function ProjectDetailPage() {
           <DialogHeader>
             <DialogTitle>Sync From Template</DialogTitle>
             <DialogDescription>
-              Add any new schedule items from the activity template.
+              Add new schedule items and remove deleted ones from the activity template.
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-2 py-2 text-sm">

@@ -181,6 +181,14 @@ export async function runMigrations(): Promise<void> {
 }
 
 /**
+ * Get the current database file path
+ */
+export async function getDatabasePath(): Promise<string> {
+  await getDatabase();
+  return dbPath;
+}
+
+/**
  * Helper: Execute a query and return results as objects
  */
 export function query<T = any>(sql: string, params: any[] = []): T[] {

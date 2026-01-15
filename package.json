@@ -12,7 +12,8 @@
       "electron:build": "npm run build && electron-builder",
       "type-check": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
       "lint": "eslint src electron --ext .ts,.tsx",
-      "rebuild": "npm rebuild better-sqlite3 --build-from-source"
+      "rebuild": "npm rebuild better-sqlite3 --build-from-source",
+      "verify": "npm run type-check && npm run lint"
   },
   "keywords": [
     "electron",

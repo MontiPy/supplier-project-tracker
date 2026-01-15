@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import {
   Table,
   TableBody,
@@ -26,6 +27,8 @@ import type {
   SupplierProjectActivityDetail,
   SupplierScheduleItemDetail,
   SupplierProject,
+  ScopeOverride,
+  ActivityStatus,
 } from '@shared/types';
 
 function formatDate(dateStr: string | null): string {
@@ -45,11 +48,14 @@ export function SupplierProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [expandedActivities, setExpandedActivities] = useState<Set<number>>(new Set());
   const [allSupplierProjects, setAllSupplierProjects] = useState<SupplierProject[]>([]);
+  const [nmrRanks, setNmrRanks] = useState<string[]>([]);
+  const [updatingRank, setUpdatingRank] = useState(false);
 
   useEffect(() => {
     if (id) {
       loadDetail();
       loadAllSupplierProjects();
+      loadSettings();
     }
   }, [id]);
 
@@ -70,23 +76,11 @@ export function SupplierProjectDetailPage() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="p-8">
-        <div className="text-center">Loading supplier project...</div>
-      </div>
-    );
-  }
-
-  if (!detail) {
-    return (
-      <div className="p-8">
-        <div className="text-center text-red-600">Supplier project not found.</div>
-        <div className="text-center mt-4">
-          <Button onClick={() => navigate('/suppliers')}>Back to Suppliers</Button>
-        </div>
-      </div>
-    );
+  async function loadSettings() {
+    const response = await window.sqts.settings.getAll();
+    if (response.success && response.data) {
+      setNmrRanks(response.data.nmrRanks);
+    }
   }
 
   function toggleActivity(activityId: number) {
@@ -99,13 +93,27 @@ export function SupplierProjectDetailPage() {
     setExpandedActivities(next);
   }
 
-  // Filter to only show supplier projects for the same project
-  const sameProjectSuppliers = allSupplierProjects.filter(
-    (sp) => sp.projectId === detail.projectId
-  );
+  const sameProjectSuppliers = useMemo(() => {
+    if (!detail) {
+      return [];
+    }
+    return allSupplierProjects.filter((sp) => sp.projectId === detail.projectId);
+  }, [allSupplierProjects, detail]);
 
   const summary = useMemo(() => {
-    const items = detail.activities.flatMap((activity) => activity.scheduleItems);
+    if (!detail) {
+      return {
+        total: 0,
+        complete: 0,
+        overdue: 0,
+        nextDue: null,
+        progressPercent: 0,
+        statusLabel: 'On Track',
+      };
+    }
+    const items = detail.activities
+      .filter((activity) => activity.status !== 'Not Required')
+      .flatMap((activity) => activity.scheduleItems);
     const total = items.length;
     const complete = items.filter((item) => item.status === 'Complete').length;
     const today = new Date();
@@ -128,7 +136,47 @@ export function SupplierProjectDetailPage() {
       progressPercent,
       statusLabel: overdue > 0 ? 'At Risk' : progressPercent === 100 ? 'Complete' : 'On Track',
     };
-  }, [detail.activities]);
+  }, [detail]);
+
+  const projectRank = detail?.supplierProjectNmrRank || null;
+  const defaultRankValue = '__default__';
+
+  async function handleProjectRankChange(value: string) {
+    if (!detail) {
+      return;
+    }
+    setUpdatingRank(true);
+    const nextRank = value === defaultRankValue ? null : value;
+    const response = await window.sqts.supplierProjects.update({
+      id: detail.id,
+      supplierProjectNmrRank: nextRank,
+    });
+    setUpdatingRank(false);
+    if (response.success) {
+      setDetail({ ...detail, supplierProjectNmrRank: nextRank });
+    } else {
+      alert(response.error || 'Failed to update project NMR rank');
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-8">
+        <div className="text-center">Loading supplier project...</div>
+      </div>
+    );
+  }
+
+  if (!detail) {
+    return (
+      <div className="p-8">
+        <div className="text-center text-red-600">Supplier project not found.</div>
+        <div className="text-center mt-4">
+          <Button onClick={() => navigate('/suppliers')}>Back to Suppliers</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8">
@@ -148,8 +196,8 @@ export function SupplierProjectDetailPage() {
               <VersionBadge version={detail.projectVersion} />
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
-              <RankBadge rank={detail.nmrRank || null} />
-              {detail.nmrRank && <span>|</span>}
+              <RankBadge rank={projectRank} />
+              {projectRank && <span>|</span>}
               <span>Supplier: {detail.supplierName}</span>
               {detail.activities[0]?.activityTemplateName && (
                 <>
@@ -172,6 +220,27 @@ export function SupplierProjectDetailPage() {
                   {sameProjectSuppliers.map((sp) => (
                     <SelectItem key={sp.id} value={String(sp.id)}>
                       {sp.supplierName || `Supplier ${sp.supplierId}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {nmrRanks.length > 0 && (
+              <Select
+                value={detail.supplierProjectNmrRank || defaultRankValue}
+                onValueChange={handleProjectRankChange}
+                disabled={updatingRank}
+              >
+                <SelectTrigger className="w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={defaultRankValue}>
+                    No project rank
+                  </SelectItem>
+                  {nmrRanks.map((rank) => (
+                    <SelectItem key={rank} value={rank}>
+                      {rank}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -264,8 +333,98 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
   const [activeFilter, setActiveFilter] = useState<'all' | 'incomplete' | 'dueSoon' | 'overdue'>(
     'all'
   );
+  const defaultOverrideValue = '__default__';
+  const [overrideValue, setOverrideValue] = useState<string>(
+    activity.scopeOverride || defaultOverrideValue
+  );
+  const [updatingOverride, setUpdatingOverride] = useState(false);
+  const [collapsedMilestones, setCollapsedMilestones] = useState<Set<number>>(new Set());
+  const [attachmentLabel, setAttachmentLabel] = useState('');
+  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [savingAttachment, setSavingAttachment] = useState(false);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<number | null>(null);
   const today = new Date();
-  const filteredItems = activity.scheduleItems.filter((item) => {
+
+  useEffect(() => {
+    setOverrideValue(activity.scopeOverride || defaultOverrideValue);
+  }, [activity.id, activity.scopeOverride, defaultOverrideValue]);
+
+  useEffect(() => {
+    const milestoneIds = new Set(
+      activity.scheduleItems.filter((item) => item.kind === 'MILESTONE').map((item) => item.id)
+    );
+    const milestoneIdsWithTasks = new Set<number>();
+    for (const item of activity.scheduleItems) {
+      if (
+        item.kind === 'TASK' &&
+        item.anchorType === 'SCHEDULE_ITEM' &&
+        item.anchorRefId &&
+        milestoneIds.has(item.anchorRefId)
+      ) {
+        milestoneIdsWithTasks.add(item.anchorRefId);
+      }
+    }
+    setCollapsedMilestones(new Set(milestoneIdsWithTasks));
+  }, [activity.id, activity.scheduleItems]);
+
+  useEffect(() => {
+    setAttachmentLabel('');
+    setAttachmentUrl('');
+    setDeletingAttachmentId(null);
+  }, [activity.id]);
+
+  async function handleScopeOverrideChange(value: string) {
+    setUpdatingOverride(true);
+    const response = await window.sqts.supplierActivityInstances.update({
+      id: activity.id,
+      scopeOverride: value === defaultOverrideValue ? null : (value as ScopeOverride),
+    });
+    setUpdatingOverride(false);
+    if (response.success) {
+      setOverrideValue(value);
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to update activity override');
+    }
+  }
+
+  async function handleAddAttachment() {
+    if (!attachmentUrl.trim()) {
+      alert('Attachment URL is required');
+      return;
+    }
+    setSavingAttachment(true);
+    const response = await window.sqts.supplierActivityAttachments.create({
+      supplierActivityInstanceId: activity.id,
+      label: attachmentLabel.trim() || undefined,
+      url: attachmentUrl.trim(),
+    });
+    setSavingAttachment(false);
+    if (response.success) {
+      setAttachmentLabel('');
+      setAttachmentUrl('');
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to add attachment');
+    }
+  }
+
+  async function handleDeleteAttachment(attachmentId: number) {
+    const confirmed = confirm('Remove this attachment?');
+    if (!confirmed) {
+      return;
+    }
+    setDeletingAttachmentId(attachmentId);
+    const response = await window.sqts.supplierActivityAttachments.delete(attachmentId);
+    setDeletingAttachmentId(null);
+    if (response.success) {
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to remove attachment');
+    }
+  }
+
+  const matchesFilter = (item: SupplierScheduleItemDetail) => {
     if (activeFilter === 'all') {
       return true;
     }
@@ -284,20 +443,45 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
       return diffDays >= 0 && diffDays <= 14;
     }
     return true;
-  });
+  };
 
   const completedCount = activity.scheduleItems.filter(i => i.status === 'Complete').length;
   const totalCount = activity.scheduleItems.length;
-  const activityStatus = completedCount === totalCount && totalCount > 0
+  const activityStatus = activity.status === 'Not Required'
+    ? 'Not Required'
+    : completedCount === totalCount && totalCount > 0
     ? 'Complete'
     : completedCount > 0
     ? 'In Progress'
     : 'Not Started';
 
+  const milestoneIds = new Set(
+    activity.scheduleItems.filter((item) => item.kind === 'MILESTONE').map((item) => item.id)
+  );
+  const milestoneTasks = new Map<number, SupplierScheduleItemDetail[]>();
+  for (const milestoneId of milestoneIds) {
+    milestoneTasks.set(milestoneId, []);
+  }
+  const rows: Array<{ type: 'milestone' | 'item'; item: SupplierScheduleItemDetail }> = [];
+  for (const item of activity.scheduleItems) {
+    if (
+      item.kind === 'TASK' &&
+      item.anchorType === 'SCHEDULE_ITEM' &&
+      item.anchorRefId &&
+      milestoneIds.has(item.anchorRefId)
+    ) {
+      milestoneTasks.get(item.anchorRefId)?.push(item);
+    } else if (item.kind === 'MILESTONE') {
+      rows.push({ type: 'milestone', item });
+    } else {
+      rows.push({ type: 'item', item });
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1">
             <button onClick={onToggle} className="hover:bg-muted p-1 rounded">
               {expanded ? (
@@ -316,79 +500,203 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
               </CardDescription>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Override</span>
+            <Select
+              value={overrideValue}
+              onValueChange={handleScopeOverrideChange}
+              disabled={updatingOverride}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={defaultOverrideValue}>
+                  Default (Rules)
+                </SelectItem>
+                <SelectItem value="REQUIRED">Force Required</SelectItem>
+                <SelectItem value="NOT_REQUIRED">Force Not Required</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
 
       {expanded && (
         <CardContent>
-          {activity.scheduleItems.length === 0 ? (
-            <div className="text-center text-muted-foreground py-4">No schedule items yet.</div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Show:</span>
-                <Button
-                  size="sm"
-                  variant={activeFilter === 'all' ? 'default' : 'ghost'}
-                  onClick={() => setActiveFilter('all')}
-                >
-                  All ({activity.scheduleItems.length})
-                </Button>
-                <Button
-                  size="sm"
-                  variant={activeFilter === 'incomplete' ? 'default' : 'ghost'}
-                  onClick={() => setActiveFilter('incomplete')}
-                >
-                  Incomplete (
-                  {activity.scheduleItems.filter((item) => item.status !== 'Complete').length})
-                </Button>
-                <Button
-                  size="sm"
-                  variant={activeFilter === 'dueSoon' ? 'default' : 'ghost'}
-                  onClick={() => setActiveFilter('dueSoon')}
-                >
-                  Due Soon (14d)
-                </Button>
-                <Button
-                  size="sm"
-                  variant={activeFilter === 'overdue' ? 'default' : 'ghost'}
-                  onClick={() => setActiveFilter('overdue')}
-                >
-                  Overdue (
-                  {
-                    activity.scheduleItems.filter((item) => {
-                      if (!item.plannedDate || item.status === 'Complete') {
-                        return false;
-                      }
-                      const planned = new Date(`${item.plannedDate}T00:00:00`);
-                      return planned < today;
-                    }).length
-                  }
-                  )
-                </Button>
+          <div className="space-y-4">
+            {activity.scheduleItems.length === 0 ? (
+              <div className="text-center text-muted-foreground py-4">No schedule items yet.</div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Show:</span>
+                  <Button
+                    size="sm"
+                    variant={activeFilter === 'all' ? 'default' : 'ghost'}
+                    onClick={() => setActiveFilter('all')}
+                  >
+                    All ({activity.scheduleItems.length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={activeFilter === 'incomplete' ? 'default' : 'ghost'}
+                    onClick={() => setActiveFilter('incomplete')}
+                  >
+                    Incomplete (
+                    {activity.scheduleItems.filter((item) => item.status !== 'Complete').length})
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={activeFilter === 'dueSoon' ? 'default' : 'ghost'}
+                    onClick={() => setActiveFilter('dueSoon')}
+                  >
+                    Due Soon (14d)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={activeFilter === 'overdue' ? 'default' : 'ghost'}
+                    onClick={() => setActiveFilter('overdue')}
+                  >
+                    Overdue (
+                    {
+                      activity.scheduleItems.filter((item) => {
+                        if (!item.plannedDate || item.status === 'Complete') {
+                          return false;
+                        }
+                        const planned = new Date(`${item.plannedDate}T00:00:00`);
+                        return planned < today;
+                      }).length
+                    }
+                    )
+                  </Button>
+                </div>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-16">Type</TableHead>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Planned Date</TableHead>
+                        <TableHead>Actual Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Flags</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rows.flatMap((row) => {
+                        if (row.type === 'milestone') {
+                          const tasks = milestoneTasks.get(row.item.id) || [];
+                          const visibleTasks = tasks.filter((task) => matchesFilter(task));
+                          const showMilestone = matchesFilter(row.item) || visibleTasks.length > 0;
+                          if (!showMilestone) {
+                            return [];
+                          }
+                          const isCollapsed = collapsedMilestones.has(row.item.id);
+                          const rowItems = [
+                            <SupplierScheduleItemRow
+                              key={`milestone-${row.item.id}`}
+                              item={row.item}
+                              onUpdate={onUpdate}
+                              taskCount={tasks.length}
+                              isCollapsed={isCollapsed}
+                              onToggleCollapse={() => {
+                                const next = new Set(collapsedMilestones);
+                                if (isCollapsed) {
+                                  next.delete(row.item.id);
+                                } else {
+                                  next.add(row.item.id);
+                                }
+                                setCollapsedMilestones(next);
+                              }}
+                            />,
+                          ];
+                          if (!isCollapsed) {
+                            rowItems.push(
+                              ...visibleTasks.map((task) => (
+                                <SupplierScheduleItemRow
+                                  key={`task-${task.id}`}
+                                  item={task}
+                                  onUpdate={onUpdate}
+                                  isChild
+                                />
+                              ))
+                            );
+                          }
+                          return rowItems;
+                        }
+                        if (!matchesFilter(row.item)) {
+                          return [];
+                        }
+                        return [
+                          <SupplierScheduleItemRow
+                            key={`item-${row.item.id}`}
+                            item={row.item}
+                            onUpdate={onUpdate}
+                          />,
+                        ];
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+
+            <div className="border rounded-md p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-semibold">Attachments</h4>
+                <span className="text-xs text-muted-foreground">
+                  {activity.attachments.length} item{activity.attachments.length === 1 ? '' : 's'}
+                </span>
               </div>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-16">Type</TableHead>
-                      <TableHead>Item</TableHead>
-                      <TableHead>Planned Date</TableHead>
-                      <TableHead>Actual Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Flags</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredItems.map((item) => (
-                      <SupplierScheduleItemRow key={item.id} item={item} onUpdate={onUpdate} />
-                    ))}
-                  </TableBody>
-                </Table>
+              {activity.attachments.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No attachments yet.</div>
+              ) : (
+                <div className="space-y-2">
+                  {activity.attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <a
+                          href={attachment.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sm text-blue-600 hover:underline break-all"
+                        >
+                          {attachment.label || attachment.url}
+                        </a>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteAttachment(attachment.id)}
+                        disabled={deletingAttachmentId === attachment.id}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-4 grid gap-2 md:grid-cols-3">
+                <Input
+                  placeholder="Label (optional)"
+                  value={attachmentLabel}
+                  onChange={(e) => setAttachmentLabel(e.target.value)}
+                />
+                <Input
+                  placeholder="URL"
+                  value={attachmentUrl}
+                  onChange={(e) => setAttachmentUrl(e.target.value)}
+                />
+                <Button onClick={handleAddAttachment} disabled={savingAttachment}>
+                  {savingAttachment ? 'Adding...' : 'Add Attachment'}
+                </Button>
               </div>
             </div>
-          )}
+          </div>
         </CardContent>
       )}
     </Card>
@@ -398,22 +706,49 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
 interface SupplierScheduleItemRowProps {
   item: SupplierScheduleItemDetail;
   onUpdate: () => void;
+  isChild?: boolean;
+  taskCount?: number;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProps) {
+const statusOptions: ActivityStatus[] = [
+  'Not Started',
+  'In Progress',
+  'Blocked',
+  'Complete',
+  'Not Required',
+];
+
+function SupplierScheduleItemRow({
+  item,
+  onUpdate,
+  isChild = false,
+  taskCount,
+  isCollapsed,
+  onToggleCollapse,
+}: SupplierScheduleItemRowProps) {
   const [actualDate, setActualDate] = useState(item.actualDate || '');
+  const [plannedDate, setPlannedDate] = useState(item.plannedDate || '');
   const [status, setStatus] = useState(item.status);
+  const [plannedOverride, setPlannedOverride] = useState(item.plannedDateOverride || false);
+  const [locked, setLocked] = useState(item.locked || false);
 
   useEffect(() => {
     setActualDate(item.actualDate || '');
+    setPlannedDate(item.plannedDate || '');
     setStatus(item.status);
-  }, [item.id, item.actualDate, item.status]);
-
-  const locked = item.locked || false;
+    setPlannedOverride(item.plannedDateOverride || false);
+    setLocked(item.locked || false);
+  }, [item.id, item.actualDate, item.plannedDate, item.status, item.plannedDateOverride, item.locked]);
 
   async function handleActualDateCommit(nextDate: string) {
+    if (!item.supplierScheduleItemId) {
+      alert('Missing schedule item instance');
+      return;
+    }
     const response = await window.sqts.supplierScheduleItemInstances.update({
-      id: item.id,
+      id: item.supplierScheduleItemId,
       actualDate: nextDate === '' ? undefined : nextDate,
     });
     if (response.success) {
@@ -423,23 +758,84 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
     }
   }
 
-  async function handleMarkComplete() {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    const todayValue = `${yyyy}-${mm}-${dd}`;
+  async function handlePlannedDateCommit(nextDate: string) {
+    if (!item.supplierScheduleItemId) {
+      alert('Missing schedule item instance');
+      return;
+    }
     const response = await window.sqts.supplierScheduleItemInstances.update({
-      id: item.id,
-      status: 'Complete',
-      actualDate: item.actualDate || todayValue,
+      id: item.supplierScheduleItemId,
+      plannedDate: nextDate === '' ? undefined : nextDate,
+      plannedDateOverride: plannedOverride,
     });
     if (response.success) {
-      setStatus('Complete');
-      setActualDate(item.actualDate || todayValue);
       onUpdate();
     } else {
-      alert(response.error || 'Failed to complete item');
+      alert(response.error || 'Failed to update planned date');
+    }
+  }
+
+  async function handlePlannedOverrideChange(nextValue: boolean) {
+    if (!item.supplierScheduleItemId) {
+      alert('Missing schedule item instance');
+      return;
+    }
+    const response = await window.sqts.supplierScheduleItemInstances.update({
+      id: item.supplierScheduleItemId,
+      plannedDateOverride: nextValue,
+      plannedDate: nextValue ? (plannedDate || item.plannedDate || undefined) : undefined,
+    });
+    if (response.success) {
+      setPlannedOverride(nextValue);
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to update planned date override');
+    }
+  }
+
+  async function handleStatusChange(nextStatus: ActivityStatus) {
+    if (!item.supplierScheduleItemId) {
+      alert('Missing schedule item instance');
+      return;
+    }
+    const updates: { status: ActivityStatus; actualDate?: string } = { status: nextStatus };
+    if (nextStatus === 'Complete' && !actualDate) {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      updates.actualDate = `${yyyy}-${mm}-${dd}`;
+    }
+    const response = await window.sqts.supplierScheduleItemInstances.update({
+      id: item.supplierScheduleItemId,
+      status: updates.status,
+      actualDate: updates.actualDate,
+    });
+    if (response.success) {
+      setStatus(nextStatus);
+      if (updates.actualDate) {
+        setActualDate(updates.actualDate);
+      }
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to update status');
+    }
+  }
+
+  async function handleLockChange(nextValue: boolean) {
+    if (!item.supplierScheduleItemId) {
+      alert('Missing schedule item instance');
+      return;
+    }
+    const response = await window.sqts.supplierScheduleItemInstances.update({
+      id: item.supplierScheduleItemId,
+      locked: nextValue,
+    });
+    if (response.success) {
+      setLocked(nextValue);
+      onUpdate();
+    } else {
+      alert(response.error || 'Failed to update lock');
     }
   }
 
@@ -448,8 +844,33 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
       <TableCell>
         <TypeBadge kind={item.kind} />
       </TableCell>
-      <TableCell className="font-medium">{item.name}</TableCell>
-      <TableCell>{formatDate(item.plannedDate)}</TableCell>
+      <TableCell className="font-medium">
+        <div className={`flex items-center gap-2 ${isChild ? 'pl-6' : ''}`}>
+          {taskCount && onToggleCollapse ? (
+            <button onClick={onToggleCollapse} className="hover:bg-muted p-1 rounded">
+              {isCollapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+          ) : null}
+          <span>{item.name}</span>
+          {taskCount ? (
+            <span className="text-xs text-muted-foreground">{taskCount} tasks</span>
+          ) : null}
+        </div>
+      </TableCell>
+      <TableCell>
+        <Input
+          type="date"
+          value={plannedDate}
+          onChange={(e) => setPlannedDate(e.target.value)}
+          onBlur={() => plannedOverride && handlePlannedDateCommit(plannedDate)}
+          disabled={locked || !plannedOverride}
+          className="w-36"
+        />
+      </TableCell>
       <TableCell>
         <Input
           type="date"
@@ -461,16 +882,37 @@ function SupplierScheduleItemRow({ item, onUpdate }: SupplierScheduleItemRowProp
         />
       </TableCell>
       <TableCell>
-        <StatusBadge status={status} size="sm" />
+        <Select
+          value={status}
+          onValueChange={(value) => handleStatusChange(value as ActivityStatus)}
+          disabled={locked}
+        >
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {statusOptions.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </TableCell>
-      <TableCell />
-      <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-2">
-          {status !== 'Complete' && (
-            <Button size="sm" variant="outline" onClick={handleMarkComplete} disabled={locked}>
-              Complete
-            </Button>
-          )}
+      <TableCell>
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={plannedOverride}
+              onCheckedChange={handlePlannedOverrideChange}
+              disabled={locked}
+            />
+            <span className="text-xs text-muted-foreground">Override</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={locked} onCheckedChange={handleLockChange} />
+            <span className="text-xs text-muted-foreground">Lock</span>
+          </div>
         </div>
       </TableCell>
     </TableRow>

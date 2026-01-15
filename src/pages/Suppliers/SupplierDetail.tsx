@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Breadcrumb } from '@/components/ui/breadcrumb';
-import { StatusBadge, VersionBadge, RankBadge } from '@/components/ui/status-badge';
+import { StatusBadge, VersionBadge } from '@/components/ui/status-badge';
 import type {
   Supplier,
   Project,
@@ -30,12 +30,14 @@ export function SupplierDetail() {
   const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [supplierProjects, setSupplierProjects] = useState<SupplierProjectWithProgress[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [nmrRanks, setNmrRanks] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
   const [formData, setFormData] = useState<ApplySupplierProjectParams>({
     supplierId: supplierId,
     projectId: 0,
     supplierAnchorDate: '',
+    supplierProjectNmrRank: '',
   });
 
   useEffect(() => {
@@ -71,13 +73,21 @@ export function SupplierDetail() {
           supplierId: supplierId,
           projectId: response.data[0].id,
           supplierAnchorDate: '',
+          supplierProjectNmrRank: '',
         });
       }
     }
   }
 
+  async function loadSettings() {
+    const response = await window.sqts.settings.getAll();
+    if (response.success && response.data) {
+      setNmrRanks(response.data.nmrRanks);
+    }
+  }
+
   async function openApplyDialog() {
-    await loadProjects();
+    await Promise.all([loadProjects(), loadSettings()]);
     setApplyDialogOpen(true);
   }
 
@@ -87,6 +97,7 @@ export function SupplierDetail() {
       supplierId,
       projectId: formData.projectId,
       supplierAnchorDate: formData.supplierAnchorDate || undefined,
+      supplierProjectNmrRank: formData.supplierProjectNmrRank || undefined,
     });
 
     if (response.success) {
@@ -134,7 +145,6 @@ export function SupplierDetail() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold tracking-tight">{supplier.name}</h1>
-            <RankBadge rank={supplier.nmrRank} />
           </div>
           <p className="text-muted-foreground">
             {supplier.notes || 'No notes'}
@@ -257,7 +267,10 @@ export function SupplierDetail() {
             <CardContent className="py-12">
               <div className="text-center text-muted-foreground">
                 <p className="text-lg font-medium mb-2">Parts Management</p>
-                <p>Coming soon - Part assignments and PA ranks will be managed here.</p>
+                <p className="mb-4">Manage parts and PA ranks in the Parts workspace.</p>
+                <Button variant="outline" onClick={() => navigate('/parts')}>
+                  Open Parts
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -321,6 +334,26 @@ export function SupplierDetail() {
                       setFormData({ ...formData, supplierAnchorDate: e.target.value })
                     }
                   />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="supplierProjectNmrRank">Project NMR Rank</Label>
+                  <select
+                    id="supplierProjectNmrRank"
+                    className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                    value={formData.supplierProjectNmrRank || ''}
+                    onChange={(e) =>
+                      setFormData({ ...formData, supplierProjectNmrRank: e.target.value })
+                    }
+                  >
+                    <option value="">
+                      No project rank
+                    </option>
+                    {nmrRanks.map((rank) => (
+                      <option key={rank} value={rank}>
+                        {rank}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <DialogFooter>

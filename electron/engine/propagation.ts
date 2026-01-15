@@ -12,6 +12,48 @@ import type {
 // Propagation Engine - Phase 4
 // ============================================================================
 
+interface PropagationPolicy {
+  skipComplete: boolean;
+  skipLocked: boolean;
+  skipOverridden: boolean;
+  useBusinessDays: boolean;
+}
+
+function getPropagationPolicy(): PropagationPolicy {
+  const settings = query(
+    `SELECT key, value FROM settings
+     WHERE key IN ('propagation_skip_complete', 'propagation_skip_locked', 'propagation_skip_overridden', 'use_business_days')`
+  );
+  const settingsMap: Record<string, string> = {};
+  for (const setting of settings) {
+    settingsMap[(setting as any).key] = (setting as any).value;
+  }
+
+  const skipComplete =
+    settingsMap['propagation_skip_complete'] !== undefined
+      ? settingsMap['propagation_skip_complete'] === 'true'
+      : true;
+  const skipLocked =
+    settingsMap['propagation_skip_locked'] !== undefined
+      ? settingsMap['propagation_skip_locked'] === 'true'
+      : true;
+  const skipOverridden =
+    settingsMap['propagation_skip_overridden'] !== undefined
+      ? settingsMap['propagation_skip_overridden'] === 'true'
+      : true;
+  const useBusinessDays =
+    settingsMap['use_business_days'] !== undefined
+      ? settingsMap['use_business_days'] === 'true'
+      : false;
+
+  return {
+    skipComplete,
+    skipLocked,
+    skipOverridden,
+    useBusinessDays,
+  };
+}
+
 /**
  * Check if an instance should receive propagated changes
  *
@@ -23,20 +65,21 @@ import type {
  * OTHERWISE: propagate
  */
 export function shouldPropagateToInstance(
-  instance: SupplierScheduleItemInstance
+  instance: SupplierScheduleItemInstance,
+  policy: PropagationPolicy
 ): boolean {
   // Don't propagate if locked
-  if (instance.locked) {
+  if (policy.skipLocked && instance.locked) {
     return false;
   }
 
   // Don't propagate if manually overridden
-  if (instance.plannedDateOverride) {
+  if (policy.skipOverridden && instance.plannedDateOverride) {
     return false;
   }
 
   // Don't propagate if complete (optional policy - can be configured)
-  if (instance.status === 'Complete') {
+  if (policy.skipComplete && instance.status === 'Complete') {
     return false;
   }
 
@@ -46,14 +89,14 @@ export function shouldPropagateToInstance(
 /**
  * Get reason why an instance won't be propagated
  */
-function getSkipReason(instance: SupplierScheduleItemInstance): string {
-  if (instance.locked) {
+function getSkipReason(instance: SupplierScheduleItemInstance, policy: PropagationPolicy): string {
+  if (policy.skipLocked && instance.locked) {
     return 'Locked';
   }
-  if (instance.plannedDateOverride) {
+  if (policy.skipOverridden && instance.plannedDateOverride) {
     return 'Manually overridden';
   }
-  if (instance.status === 'Complete') {
+  if (policy.skipComplete && instance.status === 'Complete') {
     return 'Already complete';
   }
   return 'Unknown';
@@ -85,6 +128,7 @@ export function previewPropagation(projectId: number): PropagationPreview {
 
   const willChange: PropagationChange[] = [];
   const wontChange: PropagationChange[] = [];
+  const policy = getPropagationPolicy();
 
   // 3. For each supplier project
   for (const sp of supplierProjects) {
@@ -93,6 +137,7 @@ export function previewPropagation(projectId: number): PropagationPreview {
       `SELECT
         ssi.id as instance_id,
         ssi.planned_date as current_planned_date,
+        ssi.actual_date as actual_date,
         ssi.status,
         ssi.locked,
         ssi.planned_date_override,
@@ -124,11 +169,17 @@ export function previewPropagation(projectId: number): PropagationPreview {
       [projectId]
     );
 
+    const actualDates = new Map(
+      instances.map((item: any) => [item.project_schedule_item_id, item.actual_date || null])
+    );
+
     // Recalculate all dates
     const recalculated = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(projectScheduleItems),
       projectAnchorDate?.project_anchor_date || undefined,
-      sp.supplier_anchor_date || undefined
+      sp.supplier_anchor_date || undefined,
+      policy.useBusinessDays,
+      actualDates
     );
 
     // Create lookup map for recalculated dates
@@ -165,14 +216,14 @@ export function previewPropagation(projectId: number): PropagationPreview {
       };
 
       // Check if this instance should be propagated
-      if (shouldPropagateToInstance(instance)) {
+      if (shouldPropagateToInstance(instance, policy)) {
         // Only include if date actually changes
         if (currentPlannedDate !== newPlannedDate) {
           willChange.push(change);
         }
       } else {
         // Instance is protected
-        change.reason = getSkipReason(instance);
+        change.reason = getSkipReason(instance, policy);
         wontChange.push(change);
       }
     }

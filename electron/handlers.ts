@@ -1,5 +1,16 @@
-import { ipcMain } from 'electron';
-import { query, queryOne, run, toCamelCase } from './database.js';
+import { app, dialog, ipcMain } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  query,
+  queryOne,
+  run,
+  toCamelCase,
+  getDatabasePath,
+  runMigrations,
+  saveDatabase,
+  closeDatabase,
+} from './database.js';
 import { calculateScheduleDates, validateScheduleItems } from './scheduler.js';
 import { previewPropagation, propagateChanges } from './engine/propagation.js';
 import type {
@@ -22,9 +33,13 @@ import type {
   UpdateScheduleItemParams,
   CreateActivityTemplateScheduleItemParams,
   UpdateActivityTemplateScheduleItemParams,
+  UpsertActivityTemplateApplicabilityRuleParams,
+  CreateActivityTemplateApplicabilityClauseParams,
+  UpdateActivityTemplateApplicabilityClauseParams,
   SyncProjectActivityFromTemplateParams,
   UpdateSupplierActivityInstanceParams,
   UpdateSupplierScheduleItemInstanceParams,
+  CreateSupplierActivityAttachmentParams,
   ProjectActivityDetail,
   ProjectDetail,
   ScheduleItemWithDates,
@@ -35,7 +50,11 @@ import type {
   SupplierScheduleItemDetail,
   SupplierActivityInstance,
   SupplierScheduleItemInstance,
+  SupplierActivityAttachment,
   ActivityTemplateScheduleItem,
+  ActivityTemplateApplicability,
+  ActivityTemplateApplicabilityRule,
+  ActivityTemplateApplicabilityClause,
   Part,
   CreatePartParams,
   UpdatePartParams,
@@ -53,10 +72,13 @@ import type {
   ActionableItem,
   ReportsOverview,
   SupplierProgress,
+  ProjectProgress,
+  ReportScheduleItem,
   SupplierWithStats,
   ProjectWithStats,
   ActivityTemplateWithCounts,
   SupplierProjectWithProgress,
+  FileDialogResult,
 } from '../shared/types.js';
 
 // ============================================================================
@@ -95,6 +117,432 @@ function getUseBusinessDaysSetting(): boolean {
     ['use_business_days']
   );
   return result?.value === 'true';
+}
+
+function getPropagationSettings(): {
+  skipComplete: boolean;
+  skipLocked: boolean;
+  skipOverridden: boolean;
+} {
+  const skipComplete = getSettingValue('propagation_skip_complete');
+  const skipLocked = getSettingValue('propagation_skip_locked');
+  const skipOverridden = getSettingValue('propagation_skip_overridden');
+  return {
+    skipComplete: skipComplete !== null ? skipComplete === 'true' : true,
+    skipLocked: skipLocked !== null ? skipLocked === 'true' : true,
+    skipOverridden: skipOverridden !== null ? skipOverridden === 'true' : true,
+  };
+}
+
+function getSettingValue(key: string): string | null {
+  const result = queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ?', [key]);
+  return result?.value ?? null;
+}
+
+function parseSettingList(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.map(String);
+    }
+  } catch {
+    return [];
+  }
+  return [];
+}
+
+function getRankSettings(): { nmrRanks: string[]; paRanks: string[] } {
+  return {
+    nmrRanks: parseSettingList(getSettingValue('nmr_ranks')),
+    paRanks: parseSettingList(getSettingValue('pa_ranks')),
+  };
+}
+
+function parseComparatorValues(value: string): string[] {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map(String);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return trimmed
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function compareWithComparator(
+  subject: string | null,
+  comparator: string,
+  value: string,
+  rankOrder: string[]
+): boolean {
+  if (!subject) {
+    return false;
+  }
+
+  switch (comparator) {
+    case 'EQ':
+      return subject === value;
+    case 'NEQ':
+      return subject !== value;
+    case 'IN': {
+      const values = parseComparatorValues(value);
+      return values.includes(subject);
+    }
+    case 'NOT_IN': {
+      const values = parseComparatorValues(value);
+      return !values.includes(subject);
+    }
+    case 'GTE':
+    case 'LTE': {
+      if (rankOrder.length > 0) {
+        const subjectIndex = rankOrder.indexOf(subject);
+        const valueIndex = rankOrder.indexOf(value);
+        if (subjectIndex === -1 || valueIndex === -1) {
+          return false;
+        }
+        return comparator === 'GTE' ? subjectIndex <= valueIndex : subjectIndex >= valueIndex;
+      }
+      const comparison = subject.localeCompare(value, undefined, { numeric: true });
+      return comparator === 'GTE' ? comparison >= 0 : comparison <= 0;
+    }
+    default:
+      return false;
+  }
+}
+
+interface ApplicabilityContext {
+  supplierNmrRank: string | null;
+  partPaRanks: string[];
+  nmrRanksOrder: string[];
+  paRanksOrder: string[];
+}
+
+function evaluateApplicabilityRule(
+  rule: { operator?: string },
+  clauses: Array<{ subject_type: string; comparator: string; value: string }>,
+  context: ApplicabilityContext
+): boolean {
+  if (clauses.length === 0) {
+    return true;
+  }
+
+  const operator = rule.operator === 'ANY' ? 'ANY' : 'ALL';
+  const evaluateClause = (clause: {
+    subject_type: string;
+    comparator: string;
+    value: string;
+  }): boolean => {
+    if (clause.subject_type === 'SUPPLIER_NMR') {
+      return compareWithComparator(
+        context.supplierNmrRank,
+        clause.comparator,
+        clause.value,
+        context.nmrRanksOrder
+      );
+    }
+    if (clause.subject_type === 'PART_PA') {
+      if (context.partPaRanks.length === 0) {
+        return false;
+      }
+      return context.partPaRanks.some((rank) =>
+        compareWithComparator(rank, clause.comparator, clause.value, context.paRanksOrder)
+      );
+    }
+    return false;
+  };
+
+  if (operator === 'ANY') {
+    return clauses.some((clause) => evaluateClause(clause));
+  }
+
+  return clauses.every((clause) => evaluateClause(clause));
+}
+
+function shouldIncludeActivity(activityTemplateId: number, context: ApplicabilityContext): boolean {
+  const rules = query(
+    'SELECT * FROM activity_template_applicability_rules WHERE activity_template_id = ?',
+    [activityTemplateId]
+  );
+
+  if (rules.length === 0) {
+    return true;
+  }
+
+  let hasEnabledRule = false;
+  for (const rule of rules) {
+    if (!rule.enabled) {
+      continue;
+    }
+    hasEnabledRule = true;
+    const clauses = query<{ subject_type: string; comparator: string; value: string }>(
+      'SELECT subject_type, comparator, value FROM activity_template_applicability_clauses WHERE rule_id = ?',
+      [rule.id]
+    );
+    if (evaluateApplicabilityRule(rule, clauses, context)) {
+      return true;
+    }
+  }
+
+  return !hasEnabledRule;
+}
+
+function evaluateApplicabilityForSupplierProject(supplierProjectId: number): void {
+  const supplierProject = queryOne(
+    `SELECT sp.*, p.project_anchor_date
+     FROM supplier_projects sp
+     JOIN projects p ON sp.project_id = p.id
+     WHERE sp.id = ?`,
+    [supplierProjectId]
+  );
+
+  if (!supplierProject) {
+    return;
+  }
+
+  const partRanks = query<{ pa_rank: string | null }>(
+    'SELECT pa_rank FROM parts WHERE supplier_project_id = ?',
+    [supplierProjectId]
+  )
+    .map((row) => row.pa_rank)
+    .filter((rank): rank is string => Boolean(rank));
+
+  const { nmrRanks, paRanks } = getRankSettings();
+  const supplierNmrRank = supplierProject.supplier_project_nmr_rank ?? null;
+
+  const context: ApplicabilityContext = {
+    supplierNmrRank,
+    partPaRanks: partRanks,
+    nmrRanksOrder: nmrRanks,
+    paRanksOrder: paRanks,
+  };
+
+  const projectActivities = query(
+    'SELECT * FROM project_activities WHERE project_id = ? ORDER BY sort_order',
+    [supplierProject.project_id]
+  );
+
+  for (const activity of projectActivities) {
+    const instance = queryOne(
+      'SELECT * FROM supplier_activity_instances WHERE supplier_project_id = ? AND project_activity_id = ?',
+      [supplierProjectId, activity.id]
+    );
+
+    let include = shouldIncludeActivity(activity.activity_template_id, context);
+
+    if (instance?.scope_override === 'REQUIRED') {
+      include = true;
+    }
+    if (instance?.scope_override === 'NOT_REQUIRED') {
+      include = false;
+    }
+
+    if (include) {
+      if (!instance) {
+        const insertResult = run(
+          `INSERT INTO supplier_activity_instances
+           (supplier_project_id, project_activity_id, status)
+           VALUES (?, ?, ?)`,
+          [supplierProjectId, activity.id, 'Not Started']
+        );
+        ensureSupplierScheduleItemsForActivity(
+          insertResult.lastInsertRowid,
+          activity.id,
+          supplierProject.project_anchor_date,
+          supplierProject.supplier_anchor_date
+        );
+      } else {
+        if (instance.status === 'Not Required') {
+          run('UPDATE supplier_activity_instances SET status = ? WHERE id = ?', [
+            'Not Started',
+            instance.id,
+          ]);
+        }
+        ensureSupplierScheduleItemsForActivity(
+          instance.id,
+          activity.id,
+          supplierProject.project_anchor_date,
+          supplierProject.supplier_anchor_date
+        );
+      }
+    } else {
+      if (!instance) {
+        run(
+          `INSERT INTO supplier_activity_instances
+           (supplier_project_id, project_activity_id, status)
+           VALUES (?, ?, ?)`,
+          [supplierProjectId, activity.id, 'Not Required']
+        );
+      } else if (instance.status !== 'Not Required') {
+        run('UPDATE supplier_activity_instances SET status = ? WHERE id = ?', [
+          'Not Required',
+          instance.id,
+        ]);
+      }
+    }
+  }
+}
+
+function reapplyApplicabilityForTemplate(activityTemplateId: number): void {
+  const supplierProjects = query<{ id: number }>(
+    `SELECT DISTINCT sp.id
+     FROM supplier_projects sp
+     JOIN project_activities pa ON pa.project_id = sp.project_id
+     WHERE pa.activity_template_id = ?`,
+    [activityTemplateId]
+  );
+  for (const project of supplierProjects) {
+    evaluateApplicabilityForSupplierProject(project.id);
+  }
+}
+
+function ensureSupplierScheduleItemsForActivity(
+  supplierActivityInstanceId: number,
+  projectActivityId: number,
+  projectAnchorDate: string | null,
+  supplierAnchorDate: string | null
+): void {
+  const projectItemsRaw = query<ProjectScheduleItem>(
+    'SELECT * FROM project_schedule_items WHERE project_activity_id = ? ORDER BY sort_order',
+    [projectActivityId]
+  );
+
+  if (projectItemsRaw.length === 0) {
+    return;
+  }
+
+  const existingItems = query<{ project_schedule_item_id: number; actual_date: string | null }>(
+    `SELECT project_schedule_item_id, actual_date
+     FROM supplier_schedule_item_instances
+     WHERE supplier_activity_instance_id = ?`,
+    [supplierActivityInstanceId]
+  );
+  const existingIds = new Set(existingItems.map((item) => item.project_schedule_item_id));
+  const actualDates = new Map(
+    existingItems.map((item) => [item.project_schedule_item_id, item.actual_date || null])
+  );
+  const missingItems = projectItemsRaw.filter((item: any) => !existingIds.has(item.id));
+
+  if (missingItems.length === 0) {
+    return;
+  }
+
+  const useBusinessDays = getUseBusinessDaysSetting();
+  const itemsWithDates = calculateScheduleDates(
+    toCamelCase<ProjectScheduleItem[]>(projectItemsRaw),
+    projectAnchorDate || undefined,
+    supplierAnchorDate || undefined,
+    useBusinessDays,
+    actualDates
+  );
+  const plannedDateById = new Map(itemsWithDates.map((item) => [item.id, item.plannedDate]));
+
+  for (const missing of missingItems) {
+    run(
+      `INSERT INTO supplier_schedule_item_instances
+       (supplier_activity_instance_id, project_schedule_item_id, planned_date)
+       VALUES (?, ?, ?)`,
+      [supplierActivityInstanceId, missing.id, plannedDateById.get(missing.id) || null]
+    );
+  }
+}
+
+function recalculateCompletionAnchorsForActivity(supplierActivityInstanceId: number): void {
+  const context = queryOne<{
+    project_activity_id: number;
+    project_anchor_date: string | null;
+    supplier_anchor_date: string | null;
+  }>(
+    `SELECT sai.project_activity_id,
+            p.project_anchor_date,
+            sp.supplier_anchor_date
+     FROM supplier_activity_instances sai
+     JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+     JOIN projects p ON sp.project_id = p.id
+     WHERE sai.id = ?`,
+    [supplierActivityInstanceId]
+  );
+
+  if (!context) {
+    return;
+  }
+
+  const projectItemsRaw = query<ProjectScheduleItem>(
+    'SELECT * FROM project_schedule_items WHERE project_activity_id = ? ORDER BY sort_order',
+    [context.project_activity_id]
+  );
+
+  if (projectItemsRaw.length === 0) {
+    return;
+  }
+
+  const projectItems = toCamelCase<ProjectScheduleItem[]>(projectItemsRaw);
+  const instances = query<{
+    id: number;
+    project_schedule_item_id: number;
+    planned_date: string | null;
+    actual_date: string | null;
+    planned_date_override: number;
+    locked: number;
+    status: string;
+  }>(
+    `SELECT id, project_schedule_item_id, planned_date, actual_date,
+            planned_date_override, locked, status
+     FROM supplier_schedule_item_instances
+     WHERE supplier_activity_instance_id = ?`,
+    [supplierActivityInstanceId]
+  );
+
+  const actualDates = new Map(
+    instances.map((item) => [item.project_schedule_item_id, item.actual_date || null])
+  );
+  const useBusinessDays = getUseBusinessDaysSetting();
+  const recalculated = calculateScheduleDates(
+    projectItems,
+    context.project_anchor_date || undefined,
+    context.supplier_anchor_date || undefined,
+    useBusinessDays,
+    actualDates
+  );
+  const recalculatedById = new Map(recalculated.map((item) => [item.id, item.plannedDate]));
+  const instancesByProjectId = new Map(instances.map((item) => [item.project_schedule_item_id, item]));
+  const settings = getPropagationSettings();
+
+  for (const item of projectItems) {
+    if (item.anchorType !== 'COMPLETION') {
+      continue;
+    }
+    const instance = instancesByProjectId.get(item.id);
+    if (!instance) {
+      continue;
+    }
+    if (settings.skipLocked && instance.locked) {
+      continue;
+    }
+    if (settings.skipOverridden && instance.planned_date_override) {
+      continue;
+    }
+    if (settings.skipComplete && instance.status === 'Complete') {
+      continue;
+    }
+
+    const nextPlannedDate = recalculatedById.get(item.id) || null;
+    if (instance.planned_date !== nextPlannedDate) {
+      run(
+        'UPDATE supplier_schedule_item_instances SET planned_date = ? WHERE id = ?',
+        [nextPlannedDate, instance.id]
+      );
+    }
+  }
 }
 
 // ============================================================================
@@ -164,12 +612,12 @@ function handleSuppliersGet(_event: any, id: number): APIResponse<Supplier> {
 
 function handleSuppliersCreate(_event: any, params: CreateSupplierParams): APIResponse<Supplier> {
   try {
-    const { name, nmrRank, notes } = params;
+    const { name, notes } = params;
 
     const result = run(
-      `INSERT INTO suppliers (name, nmr_rank, notes)
-       VALUES (?, ?, ?)`,
-      [name, nmrRank || null, notes || null]
+      `INSERT INTO suppliers (name, notes)
+       VALUES (?, ?)`,
+      [name, notes || null]
     );
 
     const supplier = queryOne('SELECT * FROM suppliers WHERE id = ?', [result.lastInsertRowid]);
@@ -183,7 +631,7 @@ function handleSuppliersCreate(_event: any, params: CreateSupplierParams): APIRe
 
 function handleSuppliersUpdate(_event: any, params: UpdateSupplierParams): APIResponse<Supplier> {
   try {
-    const { id, name, nmrRank, notes } = params;
+    const { id, name, notes } = params;
 
     // Build dynamic update query
     const updates: string[] = [];
@@ -192,10 +640,6 @@ function handleSuppliersUpdate(_event: any, params: UpdateSupplierParams): APIRe
     if (name !== undefined) {
       updates.push('name = ?');
       values.push(name);
-    }
-    if (nmrRank !== undefined) {
-      updates.push('nmr_rank = ?');
-      values.push(nmrRank);
     }
     if (notes !== undefined) {
       updates.push('notes = ?');
@@ -444,6 +888,219 @@ function handleActivityTemplateScheduleItemsDelete(_event: any, id: number): API
     return createSuccessResponse(undefined);
   } catch (error) {
     console.error('Error deleting activity template schedule item:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Activity Template Applicability Rules Handlers
+// ============================================================================
+
+function handleActivityTemplateApplicabilityGet(
+  _event: any,
+  activityTemplateId: number
+): APIResponse<ActivityTemplateApplicability> {
+  try {
+    const ruleRaw = queryOne(
+      'SELECT * FROM activity_template_applicability_rules WHERE activity_template_id = ?',
+      [activityTemplateId]
+    );
+    if (!ruleRaw) {
+      return createSuccessResponse({ rule: null, clauses: [] });
+    }
+    const clauses = query(
+      'SELECT * FROM activity_template_applicability_clauses WHERE rule_id = ? ORDER BY id',
+      [ruleRaw.id]
+    );
+    return createSuccessResponse({
+      rule: toCamelCase<ActivityTemplateApplicabilityRule>(ruleRaw),
+      clauses: toCamelCase<ActivityTemplateApplicabilityClause[]>(clauses),
+    });
+  } catch (error) {
+    console.error('Error getting activity template applicability:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateApplicabilityUpsertRule(
+  _event: any,
+  params: UpsertActivityTemplateApplicabilityRuleParams
+): APIResponse<ActivityTemplateApplicabilityRule> {
+  try {
+    const { activityTemplateId, operator, enabled } = params;
+
+    const existing = queryOne(
+      'SELECT * FROM activity_template_applicability_rules WHERE activity_template_id = ?',
+      [activityTemplateId]
+    );
+
+    if (existing) {
+      run(
+        `UPDATE activity_template_applicability_rules
+         SET operator = ?, enabled = ?
+         WHERE id = ?`,
+        [operator, enabled ? 1 : 0, existing.id]
+      );
+      const updated = queryOne(
+        'SELECT * FROM activity_template_applicability_rules WHERE id = ?',
+        [existing.id]
+      );
+      reapplyApplicabilityForTemplate(activityTemplateId);
+      return createSuccessResponse(toCamelCase<ActivityTemplateApplicabilityRule>(updated));
+    }
+
+    const insertResult = run(
+      `INSERT INTO activity_template_applicability_rules
+       (activity_template_id, operator, enabled)
+       VALUES (?, ?, ?)`,
+      [activityTemplateId, operator, enabled ? 1 : 0]
+    );
+    const rule = queryOne(
+      'SELECT * FROM activity_template_applicability_rules WHERE id = ?',
+      [insertResult.lastInsertRowid]
+    );
+    reapplyApplicabilityForTemplate(activityTemplateId);
+    return createSuccessResponse(toCamelCase<ActivityTemplateApplicabilityRule>(rule));
+  } catch (error) {
+    console.error('Error upserting activity template applicability rule:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateApplicabilityDeleteRule(
+  _event: any,
+  id: number
+): APIResponse<void> {
+  try {
+    const rule = queryOne<{ activity_template_id: number }>(
+      'SELECT activity_template_id FROM activity_template_applicability_rules WHERE id = ?',
+      [id]
+    );
+    const result = run('DELETE FROM activity_template_applicability_rules WHERE id = ?', [id]);
+    if (result.changes === 0) {
+      return createErrorResponse(`Applicability rule not found: ${id}`);
+    }
+    if (rule) {
+      reapplyApplicabilityForTemplate(rule.activity_template_id);
+    }
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting activity template applicability rule:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateApplicabilityCreateClause(
+  _event: any,
+  params: CreateActivityTemplateApplicabilityClauseParams
+): APIResponse<ActivityTemplateApplicabilityClause> {
+  try {
+    const { ruleId, subjectType, comparator, value } = params;
+    const trimmedValue = value.trim();
+    if (trimmedValue === '') {
+      return createErrorResponse('Clause value is required');
+    }
+    const insertResult = run(
+      `INSERT INTO activity_template_applicability_clauses
+       (rule_id, subject_type, comparator, value)
+       VALUES (?, ?, ?, ?)`,
+      [ruleId, subjectType, comparator, trimmedValue]
+    );
+    const clause = queryOne(
+      'SELECT * FROM activity_template_applicability_clauses WHERE id = ?',
+      [insertResult.lastInsertRowid]
+    );
+    const rule = queryOne<{ activity_template_id: number }>(
+      'SELECT activity_template_id FROM activity_template_applicability_rules WHERE id = ?',
+      [ruleId]
+    );
+    if (rule) {
+      reapplyApplicabilityForTemplate(rule.activity_template_id);
+    }
+    return createSuccessResponse(toCamelCase<ActivityTemplateApplicabilityClause>(clause));
+  } catch (error) {
+    console.error('Error creating applicability clause:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateApplicabilityUpdateClause(
+  _event: any,
+  params: UpdateActivityTemplateApplicabilityClauseParams
+): APIResponse<ActivityTemplateApplicabilityClause> {
+  try {
+    const { id, subjectType, comparator, value } = params;
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (subjectType !== undefined) {
+      updates.push('subject_type = ?');
+      values.push(subjectType);
+    }
+    if (comparator !== undefined) {
+      updates.push('comparator = ?');
+      values.push(comparator);
+    }
+    if (value !== undefined) {
+      const trimmedValue = value.trim();
+      if (trimmedValue === '') {
+        return createErrorResponse('Clause value is required');
+      }
+      updates.push('value = ?');
+      values.push(trimmedValue);
+    }
+
+    if (updates.length === 0) {
+      return createErrorResponse('No fields to update');
+    }
+
+    values.push(id);
+    run(`UPDATE activity_template_applicability_clauses SET ${updates.join(', ')} WHERE id = ?`, values);
+
+    const clause = queryOne(
+      'SELECT * FROM activity_template_applicability_clauses WHERE id = ?',
+      [id]
+    );
+    const rule = queryOne<{ activity_template_id: number }>(
+      `SELECT r.activity_template_id
+       FROM activity_template_applicability_clauses c
+       JOIN activity_template_applicability_rules r ON c.rule_id = r.id
+       WHERE c.id = ?`,
+      [id]
+    );
+    if (rule) {
+      reapplyApplicabilityForTemplate(rule.activity_template_id);
+    }
+    return createSuccessResponse(toCamelCase<ActivityTemplateApplicabilityClause>(clause));
+  } catch (error) {
+    console.error('Error updating applicability clause:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateApplicabilityDeleteClause(
+  _event: any,
+  id: number
+): APIResponse<void> {
+  try {
+    const rule = queryOne<{ activity_template_id: number }>(
+      `SELECT r.activity_template_id
+       FROM activity_template_applicability_clauses c
+       JOIN activity_template_applicability_rules r ON c.rule_id = r.id
+       WHERE c.id = ?`,
+      [id]
+    );
+    const result = run('DELETE FROM activity_template_applicability_clauses WHERE id = ?', [id]);
+    if (result.changes === 0) {
+      return createErrorResponse(`Applicability clause not found: ${id}`);
+    }
+    if (rule) {
+      reapplyApplicabilityForTemplate(rule.activity_template_id);
+    }
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting applicability clause:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -752,8 +1409,34 @@ function handleProjectActivitiesSyncFromTemplate(
       [projectActivityId]
     );
 
+    const templateItemIds = new Set(templateItemsRaw.map((item: any) => item.id));
+    const projectItemIdsToRemove = projectItemsRaw
+      .filter((item: any) => item.template_item_id && !templateItemIds.has(item.template_item_id))
+      .map((item: any) => item.id);
+
+    if (projectItemIdsToRemove.length > 0) {
+      const placeholders = projectItemIdsToRemove.map(() => '?').join(', ');
+      run(
+        `DELETE FROM supplier_schedule_item_instances
+         WHERE project_schedule_item_id IN (${placeholders})`,
+        projectItemIdsToRemove
+      );
+      run(
+        `UPDATE project_schedule_items
+         SET anchor_ref_id = NULL
+         WHERE project_activity_id = ? AND anchor_ref_id IN (${placeholders})`,
+        [projectActivityId, ...projectItemIdsToRemove]
+      );
+      run(`DELETE FROM project_schedule_items WHERE id IN (${placeholders})`, projectItemIdsToRemove);
+    }
+
+    const projectItemIdsToRemoveSet = new Set(projectItemIdsToRemove);
+    const remainingProjectItemsRaw = projectItemsRaw.filter(
+      (item: any) => !projectItemIdsToRemoveSet.has(item.id)
+    );
+
     const projectItemByTemplateId = new Map<number, any>();
-    for (const projectItemRaw of projectItemsRaw) {
+    for (const projectItemRaw of remainingProjectItemsRaw) {
       if (projectItemRaw.template_item_id) {
         projectItemByTemplateId.set(projectItemRaw.template_item_id, projectItemRaw);
       }
@@ -761,7 +1444,7 @@ function handleProjectActivitiesSyncFromTemplate(
 
     const projectItemIdByTemplateId = new Map<number, number>();
 
-    for (const projectItemRaw of projectItemsRaw) {
+    for (const projectItemRaw of remainingProjectItemsRaw) {
       if (projectItemRaw.template_item_id) {
         projectItemIdByTemplateId.set(projectItemRaw.template_item_id, projectItemRaw.id);
       }
@@ -785,7 +1468,7 @@ function handleProjectActivitiesSyncFromTemplate(
             null,
             templateItemRaw.offset_days,
             null,
-            projectItemsRaw.length,
+            remainingProjectItemsRaw.length,
           ]
         );
         projectItemIdByTemplateId.set(templateItemRaw.id, insertResult.lastInsertRowid);
@@ -830,6 +1513,24 @@ function handleProjectActivitiesSyncFromTemplate(
           projectItemId,
         ]);
       }
+    }
+
+    const supplierActivities = query(
+      `SELECT sai.id as supplier_activity_instance_id, sp.supplier_anchor_date
+       FROM supplier_activity_instances sai
+       JOIN supplier_projects sp ON sp.id = sai.supplier_project_id
+       WHERE sai.project_activity_id = ?`,
+      [projectActivityId]
+    );
+    const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
+
+    for (const supplierActivity of supplierActivities) {
+      ensureSupplierScheduleItemsForActivity(
+        supplierActivity.supplier_activity_instance_id,
+        projectActivityId,
+        projectAnchorDate,
+        supplierActivity.supplier_anchor_date || null
+      );
     }
 
     return createSuccessResponse(toCamelCase<ProjectActivity>(activity));
@@ -950,6 +1651,25 @@ function handleScheduleItemsCreate(
       // Rollback by deleting the just-created item
       run('DELETE FROM project_schedule_items WHERE id = ?', [result.lastInsertRowid]);
       return createErrorResponse(`Validation failed: ${errors.join(', ')}`);
+    }
+
+    const supplierActivities = query(
+      `SELECT sai.id as supplier_activity_instance_id, sp.supplier_anchor_date
+       FROM supplier_activity_instances sai
+       JOIN supplier_projects sp ON sp.id = sai.supplier_project_id
+       WHERE sai.project_activity_id = ?`,
+      [projectActivityId]
+    );
+    if (supplierActivities.length > 0) {
+      const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
+      for (const supplierActivity of supplierActivities) {
+        ensureSupplierScheduleItemsForActivity(
+          supplierActivity.supplier_activity_instance_id,
+          projectActivityId,
+          projectAnchorDate,
+          supplierActivity.supplier_anchor_date || null
+        );
+      }
     }
 
     const item = queryOne('SELECT * FROM project_schedule_items WHERE id = ?', [
@@ -1106,7 +1826,7 @@ function handleSupplierProjectsGetDetail(
 ): APIResponse<SupplierProjectDetail> {
   try {
     const supplierProject = queryOne(
-      `SELECT sp.*, s.name as supplier_name, s.nmr_rank, p.name as project_name, p.project_anchor_date
+      `SELECT sp.*, s.name as supplier_name, p.name as project_name, p.project_anchor_date
        FROM supplier_projects sp
        JOIN suppliers s ON sp.supplier_id = s.id
        JOIN projects p ON sp.project_id = p.id
@@ -1117,6 +1837,9 @@ function handleSupplierProjectsGetDetail(
     if (!supplierProject) {
       return createErrorResponse(`Supplier project not found: ${id}`);
     }
+
+    const projectAnchorDate = supplierProject.project_anchor_date || null;
+    const supplierAnchorDate = supplierProject.supplier_anchor_date || null;
 
     const activities = query(
       `SELECT sai.*, at.name as activity_template_name
@@ -1129,6 +1852,12 @@ function handleSupplierProjectsGetDetail(
     );
 
     const activitiesWithDetails: SupplierProjectActivityDetail[] = activities.map((activity: any) => {
+      ensureSupplierScheduleItemsForActivity(
+        activity.id,
+        activity.project_activity_id,
+        projectAnchorDate,
+        supplierAnchorDate
+      );
       const scheduleItems = query(
         `SELECT psi.*, ssi.id as supplier_schedule_item_id,
                 ssi.planned_date, ssi.actual_date, ssi.status,
@@ -1139,11 +1868,18 @@ function handleSupplierProjectsGetDetail(
          ORDER BY psi.sort_order`,
         [activity.id]
       );
+      const attachments = query(
+        `SELECT * FROM supplier_activity_attachments
+         WHERE supplier_activity_instance_id = ?
+         ORDER BY created_at`,
+        [activity.id]
+      );
 
       return {
         ...toCamelCase<SupplierActivityInstance>(activity),
         activityTemplateName: activity.activity_template_name,
         scheduleItems: toCamelCase<SupplierScheduleItemDetail[]>(scheduleItems),
+        attachments: toCamelCase<SupplierActivityAttachment[]>(attachments),
       };
     });
 
@@ -1152,7 +1888,6 @@ function handleSupplierProjectsGetDetail(
       supplierName: supplierProject.supplier_name,
       projectName: supplierProject.project_name,
       projectAnchorDate: supplierProject.project_anchor_date,
-      nmrRank: supplierProject.nmr_rank || null,
       activities: activitiesWithDetails,
     };
 
@@ -1168,7 +1903,7 @@ function handleSupplierProjectsApply(
   params: ApplySupplierProjectParams
 ): APIResponse<SupplierProject> {
   try {
-    const { supplierId, projectId, supplierAnchorDate } = params;
+    const { supplierId, projectId, supplierAnchorDate, supplierProjectNmrRank } = params;
 
     const supplier = queryOne('SELECT * FROM suppliers WHERE id = ?', [supplierId]);
     if (!supplier) {
@@ -1188,10 +1923,17 @@ function handleSupplierProjectsApply(
       return createErrorResponse('Project already applied to this supplier');
     }
 
+    const normalizedNmrRank =
+      supplierProjectNmrRank && supplierProjectNmrRank.trim() !== ''
+        ? supplierProjectNmrRank.trim()
+        : null;
+    const contextNmrRank = normalizedNmrRank ?? null;
+
     const insertResult = run(
-      `INSERT INTO supplier_projects (supplier_id, project_id, project_version, supplier_anchor_date)
-       VALUES (?, ?, ?, ?)`,
-      [supplierId, projectId, project.version, supplierAnchorDate || null]
+      `INSERT INTO supplier_projects
+       (supplier_id, project_id, project_version, supplier_anchor_date, supplier_project_nmr_rank)
+       VALUES (?, ?, ?, ?, ?)`,
+      [supplierId, projectId, project.version, supplierAnchorDate || null, normalizedNmrRank]
     );
 
     const supplierProjectId =
@@ -1211,12 +1953,27 @@ function handleSupplierProjectsApply(
       [projectId]
     );
 
+    const { nmrRanks, paRanks } = getRankSettings();
+    const context: ApplicabilityContext = {
+      supplierNmrRank: contextNmrRank,
+      partPaRanks: [],
+      nmrRanksOrder: nmrRanks,
+      paRanksOrder: paRanks,
+    };
+
     for (const activity of projectActivities) {
+      const includeActivity = shouldIncludeActivity(activity.activity_template_id, context);
+      const activityStatus = includeActivity ? 'Not Started' : 'Not Required';
       const activityInsert = run(
-        `INSERT INTO supplier_activity_instances (supplier_project_id, project_activity_id)
-         VALUES (?, ?)`,
-        [supplierProjectId, activity.id]
+        `INSERT INTO supplier_activity_instances
+         (supplier_project_id, project_activity_id, status)
+         VALUES (?, ?, ?)`,
+        [supplierProjectId, activity.id, activityStatus]
       );
+
+      if (!includeActivity) {
+        continue;
+      }
 
       const scheduleItems = query<ProjectScheduleItem>(
         'SELECT * FROM project_schedule_items WHERE project_activity_id = ? ORDER BY sort_order',
@@ -1257,7 +2014,7 @@ function handleSupplierProjectsUpdate(
   params: UpdateSupplierProjectParams
 ): APIResponse<SupplierProject> {
   try {
-    const { id, supplierAnchorDate } = params;
+    const { id, supplierAnchorDate, supplierProjectNmrRank } = params;
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -1266,6 +2023,14 @@ function handleSupplierProjectsUpdate(
       updates.push('supplier_anchor_date = ?');
       values.push(supplierAnchorDate);
     }
+    if (supplierProjectNmrRank !== undefined) {
+      const normalizedNmrRank =
+        supplierProjectNmrRank && supplierProjectNmrRank.trim() !== ''
+          ? supplierProjectNmrRank.trim()
+          : null;
+      updates.push('supplier_project_nmr_rank = ?');
+      values.push(normalizedNmrRank);
+    }
 
     if (updates.length === 0) {
       return createErrorResponse('No fields to update');
@@ -1273,6 +2038,10 @@ function handleSupplierProjectsUpdate(
 
     values.push(id);
     run(`UPDATE supplier_projects SET ${updates.join(', ')} WHERE id = ?`, values);
+
+    if (supplierProjectNmrRank !== undefined) {
+      evaluateApplicabilityForSupplierProject(id);
+    }
 
     const supplierProject = queryOne('SELECT * FROM supplier_projects WHERE id = ?', [id]);
     return createSuccessResponse(toCamelCase<SupplierProject>(supplierProject));
@@ -1292,6 +2061,29 @@ function handleSupplierActivityInstancesUpdate(
 ): APIResponse<SupplierActivityInstance> {
   try {
     const { id, status, scopeOverride } = params;
+    const existing = queryOne<{
+      scope_override: string | null;
+      project_id: number;
+      supplier_project_id: number;
+      supplier_name: string;
+      project_name: string;
+      activity_name: string;
+    }>(
+      `SELECT sai.scope_override,
+              sp.project_id,
+              sp.id as supplier_project_id,
+              s.name as supplier_name,
+              p.name as project_name,
+              at.name as activity_name
+       FROM supplier_activity_instances sai
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       JOIN suppliers s ON sp.supplier_id = s.id
+       JOIN projects p ON sp.project_id = p.id
+       JOIN project_activities pa ON sai.project_activity_id = pa.id
+       JOIN activity_templates at ON pa.activity_template_id = at.id
+       WHERE sai.id = ?`,
+      [id]
+    );
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -1313,6 +2105,19 @@ function handleSupplierActivityInstancesUpdate(
     run(`UPDATE supplier_activity_instances SET ${updates.join(', ')} WHERE id = ?`, values);
 
     const instance = queryOne('SELECT * FROM supplier_activity_instances WHERE id = ?', [id]);
+    if (scopeOverride !== undefined && existing?.project_id) {
+      createAuditEvent('project', existing.project_id, 'activity-override', {
+        supplierProjectId: existing.supplier_project_id,
+        supplierName: existing.supplier_name,
+        projectName: existing.project_name,
+        activityName: existing.activity_name,
+        previousScopeOverride: existing.scope_override,
+        nextScopeOverride: scopeOverride,
+      });
+    }
+    if (scopeOverride !== undefined && instance?.supplier_project_id) {
+      evaluateApplicabilityForSupplierProject(instance.supplier_project_id);
+    }
     return createSuccessResponse(toCamelCase<SupplierActivityInstance>(instance));
   } catch (error) {
     console.error('Error updating supplier activity instance:', error);
@@ -1331,6 +2136,41 @@ function handleSupplierScheduleItemInstancesUpdate(
   try {
     const { id, plannedDate, actualDate, status, plannedDateOverride, scopeOverride, locked } =
       params;
+    const existing = queryOne<{
+      planned_date: string | null;
+      planned_date_override: number;
+      scope_override: string | null;
+      locked: number;
+      project_id: number;
+      supplier_project_id: number;
+      supplier_name: string;
+      project_name: string;
+      activity_name: string;
+      schedule_item_name: string;
+      supplier_activity_instance_id: number;
+    }>(
+      `SELECT ssi.planned_date,
+              ssi.planned_date_override,
+              ssi.scope_override,
+              ssi.locked,
+              ssi.supplier_activity_instance_id,
+              sp.project_id,
+              sp.id as supplier_project_id,
+              s.name as supplier_name,
+              p.name as project_name,
+              at.name as activity_name,
+              psi.name as schedule_item_name
+       FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       JOIN suppliers s ON sp.supplier_id = s.id
+       JOIN projects p ON sp.project_id = p.id
+       JOIN project_activities pa ON sai.project_activity_id = pa.id
+       JOIN activity_templates at ON pa.activity_template_id = at.id
+       JOIN project_schedule_items psi ON ssi.project_schedule_item_id = psi.id
+       WHERE ssi.id = ?`,
+      [id]
+    );
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -1368,9 +2208,115 @@ function handleSupplierScheduleItemInstancesUpdate(
     run(`UPDATE supplier_schedule_item_instances SET ${updates.join(', ')} WHERE id = ?`, values);
 
     const instance = queryOne('SELECT * FROM supplier_schedule_item_instances WHERE id = ?', [id]);
+    const nextPlannedDate =
+      plannedDate !== undefined ? plannedDate : existing?.planned_date ?? null;
+    const nextPlannedDateOverride =
+      plannedDateOverride !== undefined
+        ? plannedDateOverride
+        : existing?.planned_date_override === 1;
+    const nextScopeOverride =
+      scopeOverride !== undefined ? scopeOverride : existing?.scope_override ?? null;
+    const nextLocked = locked !== undefined ? locked : existing?.locked === 1;
+
+    const plannedOverrideChanged =
+      plannedDateOverride !== undefined &&
+      existing?.planned_date_override !== (plannedDateOverride ? 1 : 0);
+    const lockChanged =
+      locked !== undefined && existing?.locked !== (locked ? 1 : 0);
+    const scopeOverrideChanged =
+      scopeOverride !== undefined && existing?.scope_override !== scopeOverride;
+    const plannedDateChanged =
+      plannedDate !== undefined && existing?.planned_date !== plannedDate;
+
+    if (
+      existing?.project_id &&
+      (plannedOverrideChanged || lockChanged || scopeOverrideChanged || plannedDateChanged)
+    ) {
+      createAuditEvent('project', existing.project_id, 'schedule-item-override', {
+        supplierProjectId: existing.supplier_project_id,
+        supplierName: existing.supplier_name,
+        projectName: existing.project_name,
+        activityName: existing.activity_name,
+        scheduleItemName: existing.schedule_item_name,
+        previousPlannedDate: existing.planned_date,
+        nextPlannedDate,
+        previousPlannedDateOverride: existing.planned_date_override === 1,
+        nextPlannedDateOverride,
+        previousScopeOverride: existing.scope_override,
+        nextScopeOverride,
+        previousLocked: existing.locked === 1,
+        nextLocked,
+      });
+    }
+    if (
+      (actualDate !== undefined || plannedDateOverride !== undefined) &&
+      existing?.supplier_activity_instance_id
+    ) {
+      recalculateCompletionAnchorsForActivity(existing.supplier_activity_instance_id);
+    }
     return createSuccessResponse(toCamelCase<SupplierScheduleItemInstance>(instance));
   } catch (error) {
     console.error('Error updating supplier schedule item instance:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Supplier Activity Attachments Handlers
+// ============================================================================
+
+function handleSupplierActivityAttachmentsList(
+  _event: any,
+  supplierActivityInstanceId: number
+): APIResponse<SupplierActivityAttachment[]> {
+  try {
+    const attachments = query(
+      `SELECT * FROM supplier_activity_attachments
+       WHERE supplier_activity_instance_id = ?
+       ORDER BY created_at`,
+      [supplierActivityInstanceId]
+    );
+    return createSuccessResponse(toCamelCase<SupplierActivityAttachment[]>(attachments));
+  } catch (error) {
+    console.error('Error listing supplier activity attachments:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleSupplierActivityAttachmentsCreate(
+  _event: any,
+  params: CreateSupplierActivityAttachmentParams
+): APIResponse<SupplierActivityAttachment> {
+  try {
+    const { supplierActivityInstanceId, label, url } = params;
+    if (!url || url.trim() === '') {
+      return createErrorResponse('URL is required');
+    }
+
+    const result = run(
+      `INSERT INTO supplier_activity_attachments
+       (supplier_activity_instance_id, label, url)
+       VALUES (?, ?, ?)`,
+      [supplierActivityInstanceId, label || null, url.trim()]
+    );
+
+    const attachment = queryOne(
+      'SELECT * FROM supplier_activity_attachments WHERE id = ?',
+      [result.lastInsertRowid]
+    );
+    return createSuccessResponse(toCamelCase<SupplierActivityAttachment>(attachment));
+  } catch (error) {
+    console.error('Error creating supplier activity attachment:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleSupplierActivityAttachmentsDelete(_event: any, id: number): APIResponse<void> {
+  try {
+    run('DELETE FROM supplier_activity_attachments WHERE id = ?', [id]);
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting supplier activity attachment:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -1403,6 +2349,7 @@ function handlePartsCreate(_event: any, params: CreatePartParams): APIResponse<P
     );
 
     const part = queryOne('SELECT * FROM parts WHERE id = ?', [result.lastInsertRowid]);
+    evaluateApplicabilityForSupplierProject(supplierProjectId);
     return createSuccessResponse(toCamelCase<Part>(part));
   } catch (error) {
     console.error('Error creating part:', error);
@@ -1413,6 +2360,10 @@ function handlePartsCreate(_event: any, params: CreatePartParams): APIResponse<P
 function handlePartsUpdate(_event: any, params: UpdatePartParams): APIResponse<Part> {
   try {
     const { id, partNumber, description, paRank, notes } = params;
+    const existingPart = queryOne<{ supplier_project_id: number }>(
+      'SELECT supplier_project_id FROM parts WHERE id = ?',
+      [id]
+    );
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -1441,6 +2392,10 @@ function handlePartsUpdate(_event: any, params: UpdatePartParams): APIResponse<P
     values.push(id);
     run(`UPDATE parts SET ${updates.join(', ')} WHERE id = ?`, values);
 
+    if (existingPart) {
+      evaluateApplicabilityForSupplierProject(existingPart.supplier_project_id);
+    }
+
     const part = queryOne('SELECT * FROM parts WHERE id = ?', [id]);
     return createSuccessResponse(toCamelCase<Part>(part));
   } catch (error) {
@@ -1451,10 +2406,18 @@ function handlePartsUpdate(_event: any, params: UpdatePartParams): APIResponse<P
 
 function handlePartsDelete(_event: any, id: number): APIResponse<void> {
   try {
+    const existingPart = queryOne<{ supplier_project_id: number }>(
+      'SELECT supplier_project_id FROM parts WHERE id = ?',
+      [id]
+    );
     const result = run('DELETE FROM parts WHERE id = ?', [id]);
 
     if (result.changes === 0) {
       return createErrorResponse(`Part not found: ${id}`);
+    }
+
+    if (existingPart) {
+      evaluateApplicabilityForSupplierProject(existingPart.supplier_project_id);
     }
 
     return createSuccessResponse(undefined);
@@ -1617,6 +2580,79 @@ function handleSettingsUpdate(_event: any, params: UpdateSettingParams): APIResp
     return createSuccessResponse(undefined);
   } catch (error) {
     console.error('Error updating setting:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+async function handleSettingsExportDatabase(): Promise<APIResponse<FileDialogResult>> {
+  try {
+    const dbPath = await getDatabasePath();
+    const defaultName = `supplier-tracking-backup-${formatVersionDate(new Date())}.db`;
+    const defaultPath = path.join(app.getPath('documents'), defaultName);
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export Database',
+      defaultPath,
+      filters: [
+        { name: 'SQLite Database', extensions: ['db'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (canceled || !filePath) {
+      return createSuccessResponse({ canceled: true });
+    }
+
+    const outputPath = path.extname(filePath).toLowerCase() === '.db' ? filePath : `${filePath}.db`;
+    saveDatabase();
+    fs.copyFileSync(dbPath, outputPath);
+
+    return createSuccessResponse({ canceled: false, path: outputPath });
+  } catch (error) {
+    console.error('Error exporting database:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+async function handleSettingsImportDatabase(): Promise<APIResponse<FileDialogResult>> {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Import Database',
+      properties: ['openFile'],
+      filters: [
+        { name: 'SQLite Database', extensions: ['db'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (canceled || filePaths.length === 0) {
+      return createSuccessResponse({ canceled: true });
+    }
+
+    const sourcePath = filePaths[0];
+    const dbPath = await getDatabasePath();
+
+    closeDatabase();
+    fs.copyFileSync(sourcePath, dbPath);
+    await runMigrations();
+
+    return createSuccessResponse({ canceled: false, path: sourcePath });
+  } catch (error) {
+    console.error('Error importing database:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+async function handleSettingsWipeDatabase(): Promise<APIResponse<void>> {
+  try {
+    const dbPath = await getDatabasePath();
+    closeDatabase();
+    if (fs.existsSync(dbPath)) {
+      fs.unlinkSync(dbPath);
+    }
+    await runMigrations();
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error wiping database:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -1792,7 +2828,6 @@ function handleReportsGetSupplierProgress(): APIResponse<SupplierProgress[]> {
       `SELECT
         s.id as supplier_id,
         s.name as supplier_name,
-        s.nmr_rank,
         COUNT(ssi.id) as total_items,
         SUM(CASE WHEN ssi.status = 'Complete' THEN 1 ELSE 0 END) as completed_items,
         SUM(CASE WHEN ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END) as overdue_items
@@ -1800,7 +2835,7 @@ function handleReportsGetSupplierProgress(): APIResponse<SupplierProgress[]> {
        LEFT JOIN supplier_projects sp ON s.id = sp.supplier_id
        LEFT JOIN supplier_activity_instances sai ON sp.id = sai.supplier_project_id
        LEFT JOIN supplier_schedule_item_instances ssi ON sai.id = ssi.supplier_activity_instance_id
-       GROUP BY s.id, s.name, s.nmr_rank
+       GROUP BY s.id, s.name
        ORDER BY s.name`,
       [today]
     );
@@ -1817,7 +2852,6 @@ function handleReportsGetSupplierProgress(): APIResponse<SupplierProgress[]> {
       return {
         supplierId: s.supplier_id,
         supplierName: s.supplier_name,
-        nmrRank: s.nmr_rank,
         totalItems: s.total_items || 0,
         completedItems: s.completed_items || 0,
         overdueItems: s.overdue_items || 0,
@@ -1829,6 +2863,169 @@ function handleReportsGetSupplierProgress(): APIResponse<SupplierProgress[]> {
     return createSuccessResponse(result);
   } catch (error) {
     console.error('Error getting supplier progress:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleReportsGetProjectProgress(): APIResponse<ProjectProgress[]> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const projects = query(
+      `SELECT
+        p.id as project_id,
+        p.name as project_name,
+        p.version as project_version,
+        COUNT(DISTINCT sp.id) as supplier_count,
+        COUNT(ssi.id) as total_items,
+        SUM(CASE WHEN ssi.status = 'Complete' THEN 1 ELSE 0 END) as completed_items,
+        SUM(CASE WHEN ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required') THEN 1 ELSE 0 END) as overdue_items
+       FROM projects p
+       LEFT JOIN supplier_projects sp ON p.id = sp.project_id
+       LEFT JOIN supplier_activity_instances sai ON sp.id = sai.supplier_project_id
+       LEFT JOIN supplier_schedule_item_instances ssi ON sai.id = ssi.supplier_activity_instance_id
+       GROUP BY p.id, p.name, p.version
+       ORDER BY p.name, p.version`,
+      [today]
+    );
+
+    const result: ProjectProgress[] = projects.map((p: any) => {
+      const totalItems = p.total_items || 0;
+      const completedItems = p.completed_items || 0;
+      const overdueItems = p.overdue_items || 0;
+      const progressPercent =
+        totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+      let status: 'On Track' | 'At Risk' | 'Behind' = 'On Track';
+      if (overdueItems > 0) {
+        status = 'Behind';
+      } else if (progressPercent < 50) {
+        status = 'At Risk';
+      }
+
+      return {
+        projectId: p.project_id,
+        projectName: p.project_name,
+        projectVersion: p.project_version,
+        supplierCount: p.supplier_count || 0,
+        totalItems,
+        completedItems,
+        overdueItems,
+        progressPercent,
+        status,
+      };
+    });
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error getting project progress:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleReportsGetOverdueItems(): APIResponse<ReportScheduleItem[]> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    const items = query(
+      `SELECT
+        ssi.id as supplier_schedule_item_instance_id,
+        ssi.planned_date as due_date,
+        s.id as supplier_id,
+        s.name as supplier_name,
+        p.id as project_id,
+        p.name as project_name,
+        at.name as activity_name,
+        psi.name as item_name,
+        psi.kind as item_kind,
+        ssi.status,
+        CAST(julianday(ssi.planned_date) - julianday(?) AS INTEGER) as days_until_due
+       FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       JOIN suppliers s ON sp.supplier_id = s.id
+       JOIN projects p ON sp.project_id = p.id
+       JOIN project_activities pa ON sai.project_activity_id = pa.id
+       JOIN activity_templates at ON pa.activity_template_id = at.id
+       JOIN project_schedule_items psi ON ssi.project_schedule_item_id = psi.id
+       WHERE ssi.planned_date < ? AND ssi.status NOT IN ('Complete', 'Not Required')
+       ORDER BY ssi.planned_date ASC
+       LIMIT 200`,
+      [today, today]
+    );
+
+    const result: ReportScheduleItem[] = items.map((item: any) => ({
+      supplierScheduleItemInstanceId: item.supplier_schedule_item_instance_id,
+      dueDate: item.due_date,
+      supplierId: item.supplier_id,
+      supplierName: item.supplier_name,
+      projectId: item.project_id,
+      projectName: item.project_name,
+      activityName: item.activity_name,
+      itemName: item.item_name,
+      itemKind: item.item_kind,
+      status: item.status,
+      daysUntilDue: Number(item.days_until_due) || 0,
+    }));
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error getting overdue items:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleReportsGetDueSoonItems(): APIResponse<ReportScheduleItem[]> {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 14);
+    const futureDateStr = futureDate.toISOString().split('T')[0];
+
+    const items = query(
+      `SELECT
+        ssi.id as supplier_schedule_item_instance_id,
+        ssi.planned_date as due_date,
+        s.id as supplier_id,
+        s.name as supplier_name,
+        p.id as project_id,
+        p.name as project_name,
+        at.name as activity_name,
+        psi.name as item_name,
+        psi.kind as item_kind,
+        ssi.status,
+        CAST(julianday(ssi.planned_date) - julianday(?) AS INTEGER) as days_until_due
+       FROM supplier_schedule_item_instances ssi
+       JOIN supplier_activity_instances sai ON ssi.supplier_activity_instance_id = sai.id
+       JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
+       JOIN suppliers s ON sp.supplier_id = s.id
+       JOIN projects p ON sp.project_id = p.id
+       JOIN project_activities pa ON sai.project_activity_id = pa.id
+       JOIN activity_templates at ON pa.activity_template_id = at.id
+       JOIN project_schedule_items psi ON ssi.project_schedule_item_id = psi.id
+       WHERE ssi.planned_date >= ? AND ssi.planned_date <= ?
+         AND ssi.status NOT IN ('Complete', 'Not Required')
+       ORDER BY ssi.planned_date ASC
+       LIMIT 200`,
+      [today, today, futureDateStr]
+    );
+
+    const result: ReportScheduleItem[] = items.map((item: any) => ({
+      supplierScheduleItemInstanceId: item.supplier_schedule_item_instance_id,
+      dueDate: item.due_date,
+      supplierId: item.supplier_id,
+      supplierName: item.supplier_name,
+      projectId: item.project_id,
+      projectName: item.project_name,
+      activityName: item.activity_name,
+      itemName: item.item_name,
+      itemKind: item.item_kind,
+      status: item.status,
+      daysUntilDue: Number(item.days_until_due) || 0,
+    }));
+
+    return createSuccessResponse(result);
+  } catch (error) {
+    console.error('Error getting due soon items:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -2108,6 +3305,30 @@ export function registerHandlers(): void {
     'activity-template-schedule-items:delete',
     handleActivityTemplateScheduleItemsDelete
   );
+  ipcMain.handle(
+    'activity-template-applicability:get',
+    handleActivityTemplateApplicabilityGet
+  );
+  ipcMain.handle(
+    'activity-template-applicability:upsert-rule',
+    handleActivityTemplateApplicabilityUpsertRule
+  );
+  ipcMain.handle(
+    'activity-template-applicability:delete-rule',
+    handleActivityTemplateApplicabilityDeleteRule
+  );
+  ipcMain.handle(
+    'activity-template-applicability:create-clause',
+    handleActivityTemplateApplicabilityCreateClause
+  );
+  ipcMain.handle(
+    'activity-template-applicability:update-clause',
+    handleActivityTemplateApplicabilityUpdateClause
+  );
+  ipcMain.handle(
+    'activity-template-applicability:delete-clause',
+    handleActivityTemplateApplicabilityDeleteClause
+  );
 
   // Projects
   ipcMain.handle('projects:list', handleProjectsList);
@@ -2148,6 +3369,11 @@ export function registerHandlers(): void {
   // Supplier Schedule Item Instances
   ipcMain.handle('supplier-schedule-item-instances:update', handleSupplierScheduleItemInstancesUpdate);
 
+  // Supplier Activity Attachments
+  ipcMain.handle('supplier-activity-attachments:list', handleSupplierActivityAttachmentsList);
+  ipcMain.handle('supplier-activity-attachments:create', handleSupplierActivityAttachmentsCreate);
+  ipcMain.handle('supplier-activity-attachments:delete', handleSupplierActivityAttachmentsDelete);
+
   // Parts
   ipcMain.handle('parts:list', handlePartsList);
   ipcMain.handle('parts:create', handlePartsCreate);
@@ -2162,6 +3388,9 @@ export function registerHandlers(): void {
   // Phase 5: Settings
   ipcMain.handle('settings:get-all', handleSettingsGetAll);
   ipcMain.handle('settings:update', handleSettingsUpdate);
+  ipcMain.handle('settings:export-database', handleSettingsExportDatabase);
+  ipcMain.handle('settings:import-database', handleSettingsImportDatabase);
+  ipcMain.handle('settings:wipe-database', handleSettingsWipeDatabase);
 
   // Phase 5: Dashboard
   ipcMain.handle('dashboard:get-data', handleDashboardGetData);
@@ -2169,6 +3398,9 @@ export function registerHandlers(): void {
   // Phase 5: Reports
   ipcMain.handle('reports:get-overview', handleReportsGetOverview);
   ipcMain.handle('reports:get-supplier-progress', handleReportsGetSupplierProgress);
+  ipcMain.handle('reports:get-project-progress', handleReportsGetProjectProgress);
+  ipcMain.handle('reports:get-overdue-items', handleReportsGetOverdueItems);
+  ipcMain.handle('reports:get-due-soon-items', handleReportsGetDueSoonItems);
 
   // Phase 5: Enhanced list handlers with stats
   ipcMain.handle('suppliers:list-with-stats', handleSuppliersListWithStats);

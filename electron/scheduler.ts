@@ -17,7 +17,8 @@ export function calculateScheduleDates(
   scheduleItems: ProjectScheduleItem[],
   projectAnchorDate?: string,
   supplierAnchorDate?: string,
-  useBusinessDays: boolean = false
+  useBusinessDays: boolean = false,
+  actualDates?: Map<number, string | null>
 ): ScheduleItemWithDates[] {
   const resolvedDates = new Map<number, string>(); // itemId -> computed date
   const results: ScheduleItemWithDates[] = [];
@@ -39,7 +40,8 @@ export function calculateScheduleDates(
         resolvedDates,
         projectAnchorDate,
         supplierAnchorDate,
-        useBusinessDays
+        useBusinessDays,
+        actualDates
       );
 
       if (plannedDate !== null) {
@@ -105,7 +107,8 @@ function calculatePlannedDate(
   resolvedDates: Map<number, string>,
   projectAnchorDate?: string,
   supplierAnchorDate?: string,
-  useBusinessDays: boolean = false
+  useBusinessDays: boolean = false,
+  actualDates?: Map<number, string | null>
 ): string | null {
   if (item.overrideEnabled && item.overrideDate) {
     return item.overrideDate;
@@ -147,8 +150,20 @@ function calculatePlannedDate(
       return addDays(refDate, item.offsetDays, useBusinessDays);
 
     case 'COMPLETION':
-      // Phase 3 - not implemented yet
-      return null;
+      if (item.anchorRefId === null) {
+        return null;
+      }
+      if (!actualDates) {
+        return null;
+      }
+      const completionDate = actualDates.get(item.anchorRefId) || null;
+      if (!completionDate) {
+        return null;
+      }
+      if (item.offsetDays === null) {
+        return completionDate;
+      }
+      return addDays(completionDate, item.offsetDays, useBusinessDays);
 
     default:
       return null;

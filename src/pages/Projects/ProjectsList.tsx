@@ -28,6 +28,7 @@ export function ProjectsList() {
   const [projects, setProjects] = useState<ProjectWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState<CreateProjectParams>({
     name: '',
     version: '',
@@ -73,6 +74,17 @@ export function ProjectsList() {
     });
   }
 
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredProjects = projects.filter((project) => {
+    if (!normalizedSearch) {
+      return true;
+    }
+    return (
+      project.name.toLowerCase().includes(normalizedSearch) ||
+      project.version.toLowerCase().includes(normalizedSearch)
+    );
+  });
+
   return (
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
@@ -84,6 +96,18 @@ export function ProjectsList() {
           <Plus className="mr-2 h-4 w-4" />
           New Project
         </Button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Input
+          placeholder="Search projects..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+        <span className="text-sm text-muted-foreground">
+          {filteredProjects.length} of {projects.length}
+        </span>
       </div>
 
       {loading ? (
@@ -101,6 +125,11 @@ export function ProjectsList() {
             New Project
           </Button>
         </div>
+      ) : filteredProjects.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <p className="text-lg font-medium">No projects match your search</p>
+          <p className="text-sm text-muted-foreground">Try a different name or version.</p>
+        </div>
       ) : (
         <div className="rounded-md border">
           <Table>
@@ -116,7 +145,7 @@ export function ProjectsList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {projects.map((project) => (
+              {filteredProjects.map((project) => (
                 <TableRow
                   key={project.id}
                   className="cursor-pointer hover:bg-muted/50"

@@ -57,7 +57,7 @@ export default function PropagationPreviewModal({
       const response = await window.sqts.projects.propagateChanges(projectId);
       if (response.success && response.data) {
         const result: PropagationResult = response.data;
-        alert(`Successfully updated ${result.updated.length} instances. ${result.skipped.length} instances were skipped (locked/overridden).`);
+        alert(`Successfully updated ${result.updated.length} instances. ${result.skipped.length} instances were skipped based on protection settings.`);
         onOpenChange(false);
         if (onSuccess) {
           onSuccess();
@@ -195,6 +195,7 @@ export default function PropagationPreviewModal({
                           <span className="inline-flex items-center gap-1 text-sm text-gray-600">
                             {change.reason === 'Locked' && <Lock className="h-3 w-3" />}
                             {change.reason === 'Manually overridden' && <AlertCircle className="h-3 w-3" />}
+                            {change.reason === 'Already complete' && <CheckCircle2 className="h-3 w-3" />}
                             {change.reason}
                           </span>
                         </TableCell>
