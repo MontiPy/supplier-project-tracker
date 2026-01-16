@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, AlertTriangle, Calendar } from 'lucide-react';
+import { Plus, AlertTriangle, Calendar, CheckCircle2, XCircle, Info } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -15,17 +16,21 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Breadcrumb } from '@/components/ui/breadcrumb';
-import { StatusBadge, VersionBadge } from '@/components/ui/status-badge';
+import { StatusBadge, VersionBadge, RankBadge } from '@/components/ui/status-badge';
 import type {
   Supplier,
   Project,
+  ProjectDetail,
+  ProjectActivityDetail,
   SupplierProjectWithProgress,
   ApplySupplierProjectParams,
+  ActivityTemplateApplicability,
 } from '@shared/types';
 
 export function SupplierDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const supplierId = Number(id);
   const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [supplierProjects, setSupplierProjects] = useState<SupplierProjectWithProgress[]>([]);
@@ -39,6 +44,11 @@ export function SupplierDetail() {
     supplierAnchorDate: '',
     supplierProjectNmrRank: '',
   });
+  const [selectedProjectDetail, setSelectedProjectDetail] = useState<ProjectDetail | null>(null);
+  const [activityApplicability, setActivityApplicability] = useState<
+    Map<number, ActivityTemplateApplicability>
+  >(new Map());
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   useEffect(() => {
     if (Number.isNaN(supplierId)) {
@@ -86,9 +96,123 @@ export function SupplierDetail() {
     }
   }
 
+  // Helper function to evaluate applicability rule on client side for preview
+  function evaluateApplicability(
+    applicability: ActivityTemplateApplicability,
+    selectedRank: string | undefined
+  ): { included: boolean; reason: string } {
+    const { rule, clauses } = applicability;
+
+    // No rule or rule disabled means activity is always included
+    if (!rule || !rule.enabled) {
+      return { included: true, reason: 'No applicability rule (always included)' };
+    }
+
+    if (clauses.length === 0) {
+      return { included: true, reason: 'No rule conditions (always included)' };
+    }
+
+    // Evaluate each clause
+    const clauseResults = clauses.map((clause) => {
+      if (clause.subjectType === 'SUPPLIER_NMR') {
+        const targetValue = clause.value;
+        const actualValue = selectedRank || '';
+
+        switch (clause.comparator) {
+          case 'EQ':
+            return { pass: actualValue === targetValue, desc: `NMR Rank = ${targetValue}` };
+          case 'NEQ':
+            return { pass: actualValue !== targetValue, desc: `NMR Rank ≠ ${targetValue}` };
+          case 'IN': {
+            const inValues = targetValue.split(',').map((v) => v.trim());
+            return { pass: inValues.includes(actualValue), desc: `NMR Rank in [${targetValue}]` };
+          }
+          case 'NOT_IN': {
+            const notInValues = targetValue.split(',').map((v) => v.trim());
+            return { pass: !notInValues.includes(actualValue), desc: `NMR Rank not in [${targetValue}]` };
+          }
+          case 'GTE':
+            return { pass: actualValue >= targetValue, desc: `NMR Rank >= ${targetValue}` };
+          case 'LTE':
+            return { pass: actualValue <= targetValue, desc: `NMR Rank <= ${targetValue}` };
+          default:
+            return { pass: true, desc: 'Unknown comparator' };
+        }
+      }
+      // PART_PA or unknown subject type - assume pass
+      return { pass: true, desc: 'Unknown subject' };
+    });
+
+    // Apply operator (ALL/ANY)
+    const included =
+      rule.operator === 'ALL'
+        ? clauseResults.every((r) => r.pass)
+        : clauseResults.some((r) => r.pass);
+
+    const reason = clauseResults.map((r) => r.desc).join(rule.operator === 'ALL' ? ' AND ' : ' OR ');
+    return { included, reason };
+  }
+
+  async function loadProjectPreview(projectId: number) {
+    setLoadingPreview(true);
+    try {
+      const detailResponse = await window.sqts.projects.getDetail(projectId);
+      if (detailResponse.success && detailResponse.data) {
+        setSelectedProjectDetail(detailResponse.data);
+
+        // Load applicability rules for each activity's template
+        const applicabilityMap = new Map<number, ActivityTemplateApplicability>();
+        for (const activity of detailResponse.data.activities) {
+          const appResponse = await window.sqts.activityTemplates.applicability.get(
+            activity.activityTemplateId
+          );
+          if (appResponse.success && appResponse.data) {
+            applicabilityMap.set(activity.activityTemplateId, appResponse.data);
+          }
+        }
+        setActivityApplicability(applicabilityMap);
+      }
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  function getActivityPreview(): Array<{
+    activity: ProjectActivityDetail;
+    included: boolean;
+    reason: string;
+    scheduleItemCount: number;
+  }> {
+    if (!selectedProjectDetail) return [];
+
+    return selectedProjectDetail.activities.map((activity) => {
+      const applicability = activityApplicability.get(activity.activityTemplateId);
+      const result = applicability
+        ? evaluateApplicability(applicability, formData.supplierProjectNmrRank || undefined)
+        : { included: true, reason: 'No applicability rule' };
+
+      return {
+        activity,
+        included: result.included,
+        reason: result.reason,
+        scheduleItemCount: activity.scheduleItems.length,
+      };
+    });
+  }
+
   async function openApplyDialog() {
+    setSelectedProjectDetail(null);
+    setActivityApplicability(new Map());
     await Promise.all([loadProjects(), loadSettings()]);
     setApplyDialogOpen(true);
+  }
+
+  async function handleProjectChange(projectId: number) {
+    setFormData({
+      ...formData,
+      projectId,
+    });
+    await loadProjectPreview(projectId);
   }
 
   async function handleApply(e: React.FormEvent) {
@@ -104,7 +228,7 @@ export function SupplierDetail() {
       setApplyDialogOpen(false);
       await loadSupplierProjects();
     } else {
-      alert(response.error || 'Failed to apply project');
+      toast({ title: 'Error', description: response.error || 'Failed to apply project', variant: 'destructive' });
     }
   }
 
@@ -191,6 +315,7 @@ export function SupplierDetail() {
                         <CardTitle className="text-lg truncate">{project.projectName}</CardTitle>
                         <div className="flex items-center gap-2 mt-1">
                           <VersionBadge version={project.projectVersion} />
+                          <RankBadge rank={project.supplierProjectNmrRank ?? null} />
                           {project.activityName && (
                             <span className="text-xs text-muted-foreground">
                               {project.activityName}
@@ -289,7 +414,7 @@ export function SupplierDetail() {
       </Tabs>
 
       <Dialog open={applyDialogOpen} onOpenChange={setApplyDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Apply Project</DialogTitle>
             <DialogDescription>
@@ -301,7 +426,7 @@ export function SupplierDetail() {
               No projects available. Create a project first.
             </div>
           ) : (
-            <form onSubmit={handleApply}>
+            <form onSubmit={handleApply} className="flex flex-col flex-1 overflow-hidden">
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="projectId">Project *</Label>
@@ -309,14 +434,12 @@ export function SupplierDetail() {
                     id="projectId"
                     className="h-10 rounded-md border bg-transparent px-3 text-sm"
                     value={formData.projectId}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        projectId: Number(e.target.value),
-                      })
-                    }
+                    onChange={(e) => handleProjectChange(Number(e.target.value))}
                     required
                   >
+                    <option value={0} disabled>
+                      Select a project...
+                    </option>
                     {projects.map((project) => (
                       <option key={project.id} value={project.id}>
                         {project.name} ({project.version})
@@ -324,43 +447,117 @@ export function SupplierDetail() {
                     ))}
                   </select>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="supplierAnchorDate">Supplier Anchor Date</Label>
-                  <Input
-                    id="supplierAnchorDate"
-                    type="date"
-                    value={formData.supplierAnchorDate || ''}
-                    onChange={(e) =>
-                      setFormData({ ...formData, supplierAnchorDate: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="supplierProjectNmrRank">Project NMR Rank</Label>
-                  <select
-                    id="supplierProjectNmrRank"
-                    className="h-10 rounded-md border bg-transparent px-3 text-sm"
-                    value={formData.supplierProjectNmrRank || ''}
-                    onChange={(e) =>
-                      setFormData({ ...formData, supplierProjectNmrRank: e.target.value })
-                    }
-                  >
-                    <option value="">
-                      No project rank
-                    </option>
-                    {nmrRanks.map((rank) => (
-                      <option key={rank} value={rank}>
-                        {rank}
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="supplierAnchorDate">Supplier Anchor Date</Label>
+                    <Input
+                      id="supplierAnchorDate"
+                      type="date"
+                      value={formData.supplierAnchorDate || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, supplierAnchorDate: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="supplierProjectNmrRank">Project NMR Rank</Label>
+                    <select
+                      id="supplierProjectNmrRank"
+                      className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                      value={formData.supplierProjectNmrRank || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, supplierProjectNmrRank: e.target.value })
+                      }
+                    >
+                      <option value="">No project rank</option>
+                      {nmrRanks.map((rank) => (
+                        <option key={rank} value={rank}>
+                          {rank}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
-              <DialogFooter>
+
+              {/* Activity Preview Section */}
+              {formData.projectId > 0 && (
+                <div className="flex flex-col flex-1 overflow-hidden border-t pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Info className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-medium">Activities that will be created:</span>
+                  </div>
+
+                  {loadingPreview ? (
+                    <div className="text-sm text-muted-foreground py-4 text-center">
+                      Loading preview...
+                    </div>
+                  ) : selectedProjectDetail?.activities.length === 0 ? (
+                    <div className="text-sm text-muted-foreground py-4 text-center">
+                      This project has no activities configured.
+                    </div>
+                  ) : (
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                      {getActivityPreview().map(({ activity, included, reason, scheduleItemCount }) => (
+                        <div
+                          key={activity.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border ${
+                            included
+                              ? 'bg-green-50 border-green-200'
+                              : 'bg-gray-50 border-gray-200 opacity-60'
+                          }`}
+                        >
+                          {included ? (
+                            <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                          ) : (
+                            <XCircle className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className={`font-medium truncate ${!included && 'text-gray-500'}`}>
+                                {activity.activityTemplateName}
+                              </span>
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {scheduleItemCount} item{scheduleItemCount !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <p className={`text-xs mt-1 ${included ? 'text-green-700' : 'text-gray-500'}`}>
+                              {included ? (reason || 'Will be included') : `Excluded: ${reason}`}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Summary */}
+                  {selectedProjectDetail && selectedProjectDetail.activities.length > 0 && !loadingPreview && (
+                    <div className="mt-3 pt-3 border-t text-sm text-muted-foreground">
+                      {(() => {
+                        const preview = getActivityPreview();
+                        const includedCount = preview.filter((p) => p.included).length;
+                        const totalItems = preview
+                          .filter((p) => p.included)
+                          .reduce((sum, p) => sum + p.scheduleItemCount, 0);
+                        return (
+                          <span>
+                            <span className="font-medium text-foreground">{includedCount}</span> of{' '}
+                            {preview.length} activities will be applied ({totalItems} schedule items)
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <DialogFooter className="mt-4 pt-4 border-t">
                 <Button type="button" variant="outline" onClick={() => setApplyDialogOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit">Apply Project</Button>
+                <Button type="submit" disabled={formData.projectId === 0}>
+                  Apply Project
+                </Button>
               </DialogFooter>
             </form>
           )}

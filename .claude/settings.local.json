@@ -17,7 +17,9 @@
       "Bash(exit 0)",
       "Bash(cmd //c \"tasklist | findstr /C:electron\")",
       "Bash(ls:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "Bash(wc:*)",
+      "Bash(npm run type-check:*)"
     ]
   }
 }

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
 import type { ScheduleItemWithDates, UpdateScheduleItemParams } from '@shared/types';
 
 interface EditProjectScheduleItemDialogProps {
@@ -25,6 +26,7 @@ export default function EditProjectScheduleItemDialog({
   item,
   onSuccess,
 }: EditProjectScheduleItemDialogProps) {
+  const { toast } = useToast();
   const [fixedDate, setFixedDate] = useState('');
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [overrideDate, setOverrideDate] = useState('');
@@ -63,7 +65,7 @@ export default function EditProjectScheduleItemDialog({
       onOpenChange(false);
       onSuccess();
     } else {
-      alert(response.error || 'Failed to update schedule item');
+      toast({ title: 'Error', description: response.error || 'Failed to update schedule item', variant: 'destructive' });
     }
   }
 

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Pencil, Trash2, Copy, Archive, Save, Info } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -102,6 +103,7 @@ function validateScheduleItems(items: ActivityTemplateScheduleItem[]): string[] 
 }
 
 export function ActivityLibraryPage() {
+  const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get('id') ? Number(searchParams.get('id')) : null;
 
@@ -311,10 +313,10 @@ export function ActivityLibraryPage() {
   function handleValidate() {
     const errors = validateScheduleItems(items);
     if (errors.length > 0) {
-      alert(`Validation failed:\n- ${errors.join('\n- ')}`);
+      toast({ title: 'Validation Failed', description: errors.join('; '), variant: 'destructive' });
       return;
     }
-    alert('Validation passed. No issues found.');
+    toast({ title: 'Success', description: 'Validation passed. No issues found.', variant: 'success' });
   }
 
   async function ensureApplicabilityRule(): Promise<ActivityTemplateApplicabilityRule | null> {
@@ -335,7 +337,7 @@ export function ActivityLibraryPage() {
       setApplicabilityRule(response.data);
       return response.data;
     }
-    alert(response.error || 'Failed to create applicability rule');
+    toast({ title: 'Error', description: response.error || 'Failed to create applicability rule', variant: 'destructive' });
     return null;
   }
 
@@ -356,7 +358,7 @@ export function ActivityLibraryPage() {
     if (response.success && response.data) {
       setApplicabilityRule(response.data);
     } else {
-      alert(response.error || 'Failed to update applicability rule');
+      toast({ title: 'Error', description: response.error || 'Failed to update applicability rule', variant: 'destructive' });
     }
   }
 
@@ -368,7 +370,7 @@ export function ActivityLibraryPage() {
     }
     const trimmedValue = newClause.value.trim();
     if (trimmedValue === '') {
-      alert('Clause value is required');
+      toast({ title: 'Error', description: 'Clause value is required', variant: 'destructive' });
       return;
     }
     setLoadingApplicability(true);
@@ -380,11 +382,11 @@ export function ActivityLibraryPage() {
     });
     setLoadingApplicability(false);
     if (!response.success) {
-      alert(response.error || 'Failed to add clause');
+      toast({ title: 'Error', description: response.error || 'Failed to add clause', variant: 'destructive' });
       return;
     }
     if (!response.data) {
-      alert('Failed to add clause');
+      toast({ title: 'Error', description: 'Failed to add clause', variant: 'destructive' });
       return;
     }
     const createdClause = response.data as ActivityTemplateApplicabilityClause;
@@ -410,7 +412,7 @@ export function ActivityLibraryPage() {
         prev.map((clause) => (clause.id === clauseId ? updatedClause : clause))
       );
     } else {
-      alert(response.error || 'Failed to update clause');
+      toast({ title: 'Error', description: response.error || 'Failed to update clause', variant: 'destructive' });
     }
   }
 
@@ -421,7 +423,7 @@ export function ActivityLibraryPage() {
     if (response.success) {
       setApplicabilityClauses((prev) => prev.filter((clause) => clause.id !== clauseId));
     } else {
-      alert(response.error || 'Failed to delete clause');
+      toast({ title: 'Error', description: response.error || 'Failed to delete clause', variant: 'destructive' });
     }
   }
 
@@ -441,7 +443,7 @@ export function ActivityLibraryPage() {
       setApplicabilityRule(null);
       setApplicabilityClauses([]);
     } else {
-      alert(response.error || 'Failed to delete applicability rule');
+      toast({ title: 'Error', description: response.error || 'Failed to delete applicability rule', variant: 'destructive' });
     }
   }
 
@@ -724,12 +726,14 @@ export function ActivityLibraryPage() {
               </TabsList>
 
               <TabsContent value="schedule">
-                {/* Info Banner */}
-                <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 mb-6">
-                  <Info className="h-4 w-4 flex-shrink-0" />
-                  <div>
-                    This template defines structure and offset rules. Milestones anchored to project
-                    dates are set at the project level, and tasks inherit dates from milestones.
+                {/* Info Banner - Where Logic Lives */}
+                <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800 mb-6">
+                  <Info className="h-5 w-5 flex-shrink-0 mt-0.5 text-blue-600" />
+                  <div className="text-sm">
+                    <span className="font-medium">Where logic lives:</span>{' '}
+                    Templates define schedule structure and offset rules.
+                    Milestones with <code className="bg-blue-100 px-1 rounded">PROJECT_ANCHOR</code> have dates set at the project level.
+                    Tasks derive their dates from milestone anchors using offset days.
                   </div>
                 </div>
 

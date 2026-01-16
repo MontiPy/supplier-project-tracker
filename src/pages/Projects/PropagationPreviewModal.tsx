@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
 import type { PropagationPreview, PropagationResult } from '../../../shared/types';
 import { AlertCircle, CheckCircle2, Lock, Shield } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 interface PropagationPreviewModalProps {
   open: boolean;
@@ -18,6 +19,7 @@ export default function PropagationPreviewModal({
   projectId,
   onSuccess,
 }: PropagationPreviewModalProps) {
+  const { toast } = useToast();
   const [preview, setPreview] = useState<PropagationPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -33,10 +35,10 @@ export default function PropagationPreviewModal({
       if (response.success && response.data) {
         setPreview(response.data);
       } else {
-        alert(`Error loading preview: ${response.error}`);
+        toast({ title: 'Error', description: `Error loading preview: ${response.error}`, variant: 'destructive' });
       }
     } catch (error) {
-      alert(`Error: ${String(error)}`);
+      toast({ title: 'Error', description: String(error), variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -57,16 +59,16 @@ export default function PropagationPreviewModal({
       const response = await window.sqts.projects.propagateChanges(projectId);
       if (response.success && response.data) {
         const result: PropagationResult = response.data;
-        alert(`Successfully updated ${result.updated.length} instances. ${result.skipped.length} instances were skipped based on protection settings.`);
+        toast({ title: 'Success', description: `Successfully updated ${result.updated.length} instances. ${result.skipped.length} instances were skipped based on protection settings.`, variant: 'success' });
         onOpenChange(false);
         if (onSuccess) {
           onSuccess();
         }
       } else {
-        alert(`Error applying propagation: ${response.error}`);
+        toast({ title: 'Error', description: `Error applying propagation: ${response.error}`, variant: 'destructive' });
       }
     } catch (error) {
-      alert(`Error: ${String(error)}`);
+      toast({ title: 'Error', description: String(error), variant: 'destructive' });
     } finally {
       setApplying(false);
     }

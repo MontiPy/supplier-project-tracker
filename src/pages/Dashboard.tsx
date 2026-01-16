@@ -296,9 +296,7 @@ export function Dashboard() {
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            // Navigate to the supplier project detail page
-                            // We'll need to find the supplier project ID
-                            navigate(`/suppliers/${item.supplierId}`);
+                            navigate(`/supplier-projects/${item.supplierProjectId}`);
                           }}
                         >
                           <ExternalLink className="h-4 w-4 mr-1" />

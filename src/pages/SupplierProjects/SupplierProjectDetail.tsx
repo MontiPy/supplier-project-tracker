@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -20,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Breadcrumb } from '@/components/ui/breadcrumb';
 import { VersionBadge, RankBadge, StatusBadge, TypeBadge } from '@/components/ui/status-badge';
 import type {
@@ -44,6 +46,7 @@ function formatDate(dateStr: string | null): string {
 export function SupplierProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [detail, setDetail] = useState<SupplierProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedActivities, setExpandedActivities] = useState<Set<number>>(new Set());
@@ -138,6 +141,13 @@ export function SupplierProjectDetailPage() {
     };
   }, [detail]);
 
+  const visibleActivities = useMemo(() => {
+    if (!detail) {
+      return [];
+    }
+    return detail.activities.filter((activity) => activity.status !== 'Not Required');
+  }, [detail]);
+
   const projectRank = detail?.supplierProjectNmrRank || null;
   const defaultRankValue = '__default__';
 
@@ -155,7 +165,7 @@ export function SupplierProjectDetailPage() {
     if (response.success) {
       setDetail({ ...detail, supplierProjectNmrRank: nextRank });
     } else {
-      alert(response.error || 'Failed to update project NMR rank');
+      toast({ title: 'Error', description: response.error || 'Failed to update project NMR rank', variant: 'destructive' });
     }
   }
 
@@ -199,10 +209,10 @@ export function SupplierProjectDetailPage() {
               <RankBadge rank={projectRank} />
               {projectRank && <span>|</span>}
               <span>Supplier: {detail.supplierName}</span>
-              {detail.activities[0]?.activityTemplateName && (
+              {visibleActivities[0]?.activityTemplateName && (
                 <>
                   <span>|</span>
-                  <span>Activity: {detail.activities[0].activityTemplateName}</span>
+                  <span>Activity: {visibleActivities[0].activityTemplateName}</span>
                 </>
               )}
             </div>
@@ -250,6 +260,17 @@ export function SupplierProjectDetailPage() {
         </div>
       </div>
 
+      {/* Info Banner - Where Progress Lives */}
+      <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800">
+        <Info className="h-5 w-5 flex-shrink-0 mt-0.5 text-blue-600" />
+        <div className="text-sm">
+          <span className="font-medium">Where progress lives:</span>{' '}
+          Planned dates are inherited from the project schedule (read-only).
+          Actual dates and status are tracked here at the supplier level.
+          Locked items will not be updated by propagation.
+        </div>
+      </div>
+
       {/* Inline Summary Row */}
       <div className="mb-6 flex flex-wrap items-center gap-6 p-4 bg-muted/50 rounded-lg">
         <div className="flex items-center gap-3">
@@ -284,20 +305,21 @@ export function SupplierProjectDetailPage() {
       </div>
 
       <div className="space-y-4">
-        {detail.activities.length === 0 ? (
+        {visibleActivities.length === 0 ? (
           <Card>
             <CardContent className="pt-6">
-              <div className="text-center text-muted-foreground">No activities created.</div>
+              <div className="text-center text-muted-foreground">No required activities.</div>
             </CardContent>
           </Card>
         ) : (
-          detail.activities.map((activity) => (
+          visibleActivities.map((activity) => (
             <SupplierActivityCard
               key={activity.id}
               activity={activity}
               expanded={expandedActivities.has(activity.id)}
               onToggle={() => toggleActivity(activity.id)}
               onUpdate={loadDetail}
+              projectAnchorDate={detail.projectAnchorDate}
             />
           ))
         )}
@@ -327,9 +349,11 @@ interface SupplierActivityCardProps {
   expanded: boolean;
   onToggle: () => void;
   onUpdate: () => void;
+  projectAnchorDate?: string | null;
 }
 
-function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: SupplierActivityCardProps) {
+function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectAnchorDate }: SupplierActivityCardProps) {
+  const { toast } = useToast();
   const [activeFilter, setActiveFilter] = useState<'all' | 'incomplete' | 'dueSoon' | 'overdue'>(
     'all'
   );
@@ -343,7 +367,28 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [savingAttachment, setSavingAttachment] = useState(false);
   const [deletingAttachmentId, setDeletingAttachmentId] = useState<number | null>(null);
+  const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState<ActivityStatus>('Complete');
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
   const today = new Date();
+
+  const isOverdue = (item: SupplierScheduleItemDetail) => {
+    if (!item.plannedDate || item.status === 'Complete') {
+      return false;
+    }
+    const planned = new Date(`${item.plannedDate}T00:00:00`);
+    return planned < today;
+  };
+
+  const isDueSoon = (item: SupplierScheduleItemDetail) => {
+    if (!item.plannedDate || item.status === 'Complete') {
+      return false;
+    }
+    const planned = new Date(`${item.plannedDate}T00:00:00`);
+    const diffDays = (planned.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+    return diffDays >= 0 && diffDays <= 14;
+  };
 
   useEffect(() => {
     setOverrideValue(activity.scopeOverride || defaultOverrideValue);
@@ -373,6 +418,28 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
     setDeletingAttachmentId(null);
   }, [activity.id]);
 
+  useEffect(() => {
+    setSelectedItems(new Set());
+  }, [activity.id]);
+
+  useEffect(() => {
+    setSelectedItems((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+      const validIds = new Set(
+        activity.scheduleItems.map((item) => item.supplierScheduleItemId)
+      );
+      const next = new Set<number>();
+      for (const id of prev) {
+        if (validIds.has(id)) {
+          next.add(id);
+        }
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [activity.scheduleItems]);
+
   async function handleScopeOverrideChange(value: string) {
     setUpdatingOverride(true);
     const response = await window.sqts.supplierActivityInstances.update({
@@ -384,13 +451,13 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
       setOverrideValue(value);
       onUpdate();
     } else {
-      alert(response.error || 'Failed to update activity override');
+      toast({ title: 'Error', description: response.error || 'Failed to update activity override', variant: 'destructive' });
     }
   }
 
   async function handleAddAttachment() {
     if (!attachmentUrl.trim()) {
-      alert('Attachment URL is required');
+      toast({ title: 'Error', description: 'Attachment URL is required', variant: 'destructive' });
       return;
     }
     setSavingAttachment(true);
@@ -405,7 +472,7 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
       setAttachmentUrl('');
       onUpdate();
     } else {
-      alert(response.error || 'Failed to add attachment');
+      toast({ title: 'Error', description: response.error || 'Failed to add attachment', variant: 'destructive' });
     }
   }
 
@@ -420,7 +487,114 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
     if (response.success) {
       onUpdate();
     } else {
-      alert(response.error || 'Failed to remove attachment');
+      toast({ title: 'Error', description: response.error || 'Failed to remove attachment', variant: 'destructive' });
+    }
+  }
+
+  function handleSelectionChange(itemId: number, isSelected: boolean) {
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      if (isSelected) {
+        next.add(itemId);
+      } else {
+        next.delete(itemId);
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkStatusUpdate() {
+    if (selectedItems.size === 0) {
+      return;
+    }
+    setBulkUpdating(true);
+    const todayDate = new Date();
+    const yyyy = todayDate.getFullYear();
+    const mm = String(todayDate.getMonth() + 1).padStart(2, '0');
+    const dd = String(todayDate.getDate()).padStart(2, '0');
+    const todayStr = `${yyyy}-${mm}-${dd}`;
+    const itemsById = new Map<number, SupplierScheduleItemDetail>(
+      activity.scheduleItems.map((item) => [item.supplierScheduleItemId, item])
+    );
+    try {
+      const results: Array<{ success: boolean; error?: string }> = [];
+      let skippedLocked = 0;
+      let skippedSameStatus = 0;
+      let skippedMissing = 0;
+      for (const itemId of selectedItems) {
+        const item = itemsById.get(itemId);
+        if (!item) {
+          skippedMissing += 1;
+          continue;
+        }
+        if (item.locked) {
+          skippedLocked += 1;
+          continue;
+        }
+        if (item.status === bulkStatus) {
+          skippedSameStatus += 1;
+          continue;
+        }
+        const nextUpdate: { id: number; status: ActivityStatus; actualDate?: string } = {
+          id: itemId,
+          status: bulkStatus,
+        };
+        if (bulkStatus === 'Complete' && !item.actualDate) {
+          nextUpdate.actualDate = todayStr;
+        }
+        results.push(await window.sqts.supplierScheduleItemInstances.update(nextUpdate));
+      }
+      if (results.length === 0) {
+        const skippedDetails = [
+          skippedLocked > 0 ? `${skippedLocked} locked` : null,
+          skippedSameStatus > 0 ? `${skippedSameStatus} already ${bulkStatus}` : null,
+          skippedMissing > 0 ? `${skippedMissing} unavailable` : null,
+        ].filter(Boolean);
+        toast({
+          title: 'No updates',
+          description:
+            skippedDetails.length > 0
+              ? `Skipped ${skippedDetails.join(', ')}.`
+              : 'No eligible items selected.',
+        });
+        return;
+      }
+      const failures = results.filter((result) => !result.success);
+      const successCount = results.length - failures.length;
+      if (failures.length > 0) {
+        const firstError = failures.find((failure) => failure.error)?.error;
+        toast({
+          title: 'Error',
+          description: firstError
+            ? `${failures.length} item${failures.length === 1 ? '' : 's'} failed to update: ${firstError}`
+            : `${failures.length} item${failures.length === 1 ? '' : 's'} failed to update.`,
+          variant: 'destructive',
+        });
+      }
+      if (successCount > 0) {
+        const skippedDetails = [
+          skippedLocked > 0 ? `${skippedLocked} locked` : null,
+          skippedSameStatus > 0 ? `${skippedSameStatus} already ${bulkStatus}` : null,
+          skippedMissing > 0 ? `${skippedMissing} unavailable` : null,
+        ].filter(Boolean);
+        toast({
+          title: 'Status updated',
+          description: `Updated ${successCount} item${successCount === 1 ? '' : 's'} to ${bulkStatus}.${
+            skippedDetails.length > 0 ? ` Skipped ${skippedDetails.join(', ')}.` : ''
+          }`,
+          variant: 'success',
+        });
+      }
+      setSelectedItems(new Set());
+      onUpdate();
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to update selected items.',
+        variant: 'destructive',
+      });
+    } finally {
+      setBulkUpdating(false);
     }
   }
 
@@ -431,22 +605,20 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
     if (activeFilter === 'incomplete') {
       return item.status !== 'Complete';
     }
-    if (!item.plannedDate || item.status === 'Complete') {
-      return false;
-    }
-    const planned = new Date(`${item.plannedDate}T00:00:00`);
     if (activeFilter === 'overdue') {
-      return planned < today;
+      return isOverdue(item);
     }
     if (activeFilter === 'dueSoon') {
-      const diffDays = (planned.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
-      return diffDays >= 0 && diffDays <= 14;
+      return isDueSoon(item);
     }
     return true;
   };
 
-  const completedCount = activity.scheduleItems.filter(i => i.status === 'Complete').length;
   const totalCount = activity.scheduleItems.length;
+  const completedCount = activity.scheduleItems.filter((item) => item.status === 'Complete').length;
+  const incompleteCount = totalCount - completedCount;
+  const dueSoonCount = activity.scheduleItems.filter(isDueSoon).length;
+  const overdueCount = activity.scheduleItems.filter(isOverdue).length;
   const activityStatus = activity.status === 'Not Required'
     ? 'Not Required'
     : completedCount === totalCount && totalCount > 0
@@ -454,6 +626,11 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
     : completedCount > 0
     ? 'In Progress'
     : 'Not Started';
+
+  // Build a map of item IDs to names for anchor reference tooltips
+  const itemNameMap = new Map<number, string>(
+    activity.scheduleItems.map((item) => [item.id, item.name])
+  );
 
   const milestoneIds = new Set(
     activity.scheduleItems.filter((item) => item.kind === 'MILESTONE').map((item) => item.id)
@@ -476,6 +653,114 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
     } else {
       rows.push({ type: 'item', item });
     }
+  }
+
+  const visibleItems: SupplierScheduleItemDetail[] = [];
+  const tableRows = rows.flatMap((row) => {
+    if (row.type === 'milestone') {
+      const tasks = milestoneTasks.get(row.item.id) || [];
+      const visibleTasks = tasks.filter((task) => matchesFilter(task));
+      const showMilestone = matchesFilter(row.item) || visibleTasks.length > 0;
+      if (!showMilestone) {
+        return [];
+      }
+      visibleItems.push(row.item);
+      const isCollapsed = collapsedMilestones.has(row.item.id);
+      const rowItems = [
+        <SupplierScheduleItemRow
+          key={`milestone-${row.item.id}`}
+          item={row.item}
+          onUpdate={onUpdate}
+          taskCount={tasks.length}
+          isCollapsed={isCollapsed}
+          onToggleCollapse={() => {
+            const next = new Set(collapsedMilestones);
+            if (isCollapsed) {
+              next.delete(row.item.id);
+            } else {
+              next.add(row.item.id);
+            }
+            setCollapsedMilestones(next);
+          }}
+          anchorRefName={row.item.anchorRefId ? itemNameMap.get(row.item.anchorRefId) : undefined}
+          projectAnchorDate={projectAnchorDate}
+          isSelected={selectedItems.has(row.item.supplierScheduleItemId)}
+          onSelectChange={(nextSelected) =>
+            handleSelectionChange(row.item.supplierScheduleItemId, nextSelected)
+          }
+          selectionDisabled={bulkUpdating}
+        />,
+      ];
+      if (!isCollapsed) {
+        rowItems.push(
+          ...visibleTasks.map((task) => {
+            visibleItems.push(task);
+            return (
+              <SupplierScheduleItemRow
+                key={`task-${task.id}`}
+                item={task}
+                onUpdate={onUpdate}
+                isChild
+                anchorRefName={task.anchorRefId ? itemNameMap.get(task.anchorRefId) : undefined}
+                projectAnchorDate={projectAnchorDate}
+                isSelected={selectedItems.has(task.supplierScheduleItemId)}
+                onSelectChange={(nextSelected) =>
+                  handleSelectionChange(task.supplierScheduleItemId, nextSelected)
+                }
+                selectionDisabled={bulkUpdating}
+              />
+            );
+          })
+        );
+      }
+      return rowItems;
+    }
+    if (!matchesFilter(row.item)) {
+      return [];
+    }
+    visibleItems.push(row.item);
+    return [
+      <SupplierScheduleItemRow
+        key={`item-${row.item.id}`}
+        item={row.item}
+        onUpdate={onUpdate}
+        anchorRefName={row.item.anchorRefId ? itemNameMap.get(row.item.anchorRefId) : undefined}
+        projectAnchorDate={projectAnchorDate}
+        isSelected={selectedItems.has(row.item.supplierScheduleItemId)}
+        onSelectChange={(nextSelected) =>
+          handleSelectionChange(row.item.supplierScheduleItemId, nextSelected)
+        }
+        selectionDisabled={bulkUpdating}
+      />,
+    ];
+  });
+
+  const selectableVisibleItems = visibleItems.filter((item) => !item.locked);
+  const selectedVisibleCount = selectableVisibleItems.filter((item) =>
+    selectedItems.has(item.supplierScheduleItemId)
+  ).length;
+  const allVisibleSelected =
+    selectableVisibleItems.length > 0 && selectedVisibleCount === selectableVisibleItems.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someVisibleSelected;
+    }
+  }, [someVisibleSelected, allVisibleSelected]);
+
+  function handleSelectAllVisible(nextSelected: boolean) {
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      for (const item of selectableVisibleItems) {
+        if (nextSelected) {
+          next.add(item.supplierScheduleItemId);
+        } else {
+          next.delete(item.supplierScheduleItemId);
+        }
+      }
+      return next;
+    });
   }
 
   return (
@@ -530,51 +815,85 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Show:</span>
-                  <Button
-                    size="sm"
-                    variant={activeFilter === 'all' ? 'default' : 'ghost'}
-                    onClick={() => setActiveFilter('all')}
-                  >
-                    All ({activity.scheduleItems.length})
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={activeFilter === 'incomplete' ? 'default' : 'ghost'}
-                    onClick={() => setActiveFilter('incomplete')}
-                  >
-                    Incomplete (
-                    {activity.scheduleItems.filter((item) => item.status !== 'Complete').length})
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={activeFilter === 'dueSoon' ? 'default' : 'ghost'}
-                    onClick={() => setActiveFilter('dueSoon')}
-                  >
-                    Due Soon (14d)
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={activeFilter === 'overdue' ? 'default' : 'ghost'}
-                    onClick={() => setActiveFilter('overdue')}
-                  >
-                    Overdue (
-                    {
-                      activity.scheduleItems.filter((item) => {
-                        if (!item.plannedDate || item.status === 'Complete') {
-                          return false;
-                        }
-                        const planned = new Date(`${item.plannedDate}T00:00:00`);
-                        return planned < today;
-                      }).length
+                  <span className="text-muted-foreground">Filter:</span>
+                  <Tabs
+                    value={activeFilter}
+                    onValueChange={(value) =>
+                      setActiveFilter(value as 'all' | 'incomplete' | 'dueSoon' | 'overdue')
                     }
-                    )
-                  </Button>
+                    className="w-auto"
+                  >
+                    <TabsList>
+                      <TabsTrigger value="all">
+                        All <span className="ml-1 text-xs text-muted-foreground">({totalCount})</span>
+                      </TabsTrigger>
+                      <TabsTrigger value="incomplete">
+                        Incomplete <span className="ml-1 text-xs text-muted-foreground">({incompleteCount})</span>
+                      </TabsTrigger>
+                      <TabsTrigger value="dueSoon">
+                        Due Soon 14d <span className="ml-1 text-xs text-muted-foreground">({dueSoonCount})</span>
+                      </TabsTrigger>
+                      <TabsTrigger value="overdue">
+                        Overdue <span className="ml-1 text-xs text-muted-foreground">({overdueCount})</span>
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span>Selected: {selectedItems.size}</span>
+                    {selectedItems.size > 0 && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setSelectedItems(new Set())}
+                        disabled={bulkUpdating}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={bulkStatus}
+                      onValueChange={(value) => setBulkStatus(value as ActivityStatus)}
+                      disabled={bulkUpdating}
+                    >
+                      <SelectTrigger className="w-44">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {statusOptions.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      onClick={handleBulkStatusUpdate}
+                      disabled={selectedItems.size === 0 || bulkUpdating}
+                    >
+                      {bulkUpdating ? 'Updating...' : 'Apply Status'}
+                    </Button>
+                  </div>
                 </div>
                 <div className="rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-12">
+                          <input
+                            ref={selectAllRef}
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={(event) => handleSelectAllVisible(event.target.checked)}
+                            disabled={selectableVisibleItems.length === 0 || bulkUpdating}
+                            className="h-4 w-4"
+                            aria-label="Select all visible items"
+                          />
+                        </TableHead>
                         <TableHead className="w-16">Type</TableHead>
                         <TableHead>Item</TableHead>
                         <TableHead>Planned Date</TableHead>
@@ -584,58 +903,7 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {rows.flatMap((row) => {
-                        if (row.type === 'milestone') {
-                          const tasks = milestoneTasks.get(row.item.id) || [];
-                          const visibleTasks = tasks.filter((task) => matchesFilter(task));
-                          const showMilestone = matchesFilter(row.item) || visibleTasks.length > 0;
-                          if (!showMilestone) {
-                            return [];
-                          }
-                          const isCollapsed = collapsedMilestones.has(row.item.id);
-                          const rowItems = [
-                            <SupplierScheduleItemRow
-                              key={`milestone-${row.item.id}`}
-                              item={row.item}
-                              onUpdate={onUpdate}
-                              taskCount={tasks.length}
-                              isCollapsed={isCollapsed}
-                              onToggleCollapse={() => {
-                                const next = new Set(collapsedMilestones);
-                                if (isCollapsed) {
-                                  next.delete(row.item.id);
-                                } else {
-                                  next.add(row.item.id);
-                                }
-                                setCollapsedMilestones(next);
-                              }}
-                            />,
-                          ];
-                          if (!isCollapsed) {
-                            rowItems.push(
-                              ...visibleTasks.map((task) => (
-                                <SupplierScheduleItemRow
-                                  key={`task-${task.id}`}
-                                  item={task}
-                                  onUpdate={onUpdate}
-                                  isChild
-                                />
-                              ))
-                            );
-                          }
-                          return rowItems;
-                        }
-                        if (!matchesFilter(row.item)) {
-                          return [];
-                        }
-                        return [
-                          <SupplierScheduleItemRow
-                            key={`item-${row.item.id}`}
-                            item={row.item}
-                            onUpdate={onUpdate}
-                          />,
-                        ];
-                      })}
+                      {tableRows}
                     </TableBody>
                   </Table>
                 </div>
@@ -706,10 +974,49 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: Suppli
 interface SupplierScheduleItemRowProps {
   item: SupplierScheduleItemDetail;
   onUpdate: () => void;
+  isSelected: boolean;
+  onSelectChange: (nextSelected: boolean) => void;
   isChild?: boolean;
   taskCount?: number;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  anchorRefName?: string;
+  projectAnchorDate?: string | null;
+  selectionDisabled?: boolean;
+}
+
+function getDateCalculationTooltip(
+  item: SupplierScheduleItemDetail,
+  anchorRefName?: string,
+  projectAnchorDate?: string | null
+): string {
+  const offset = item.offsetDays;
+  const offsetStr = offset
+    ? offset > 0
+      ? `+ ${offset} days`
+      : `- ${Math.abs(offset)} days`
+    : '';
+
+  switch (item.anchorType) {
+    case 'FIXED_DATE':
+      return item.fixedDate ? `Fixed date: ${item.fixedDate}` : 'Fixed date (not set)';
+    case 'PROJECT_ANCHOR':
+      return projectAnchorDate
+        ? `Project anchor (${projectAnchorDate}) ${offsetStr}`.trim()
+        : `Project anchor ${offsetStr}`.trim();
+    case 'SUPPLIER_ANCHOR':
+      return `Supplier anchor ${offsetStr}`.trim();
+    case 'SCHEDULE_ITEM':
+      return anchorRefName
+        ? `${anchorRefName} ${offsetStr}`.trim()
+        : `Referenced item ${offsetStr}`.trim();
+    case 'COMPLETION':
+      return anchorRefName
+        ? `On completion of ${anchorRefName} ${offsetStr}`.trim()
+        : `On completion ${offsetStr}`.trim();
+    default:
+      return 'Calculated date';
+  }
 }
 
 const statusOptions: ActivityStatus[] = [
@@ -723,11 +1030,18 @@ const statusOptions: ActivityStatus[] = [
 function SupplierScheduleItemRow({
   item,
   onUpdate,
+  isSelected,
+  onSelectChange,
   isChild = false,
   taskCount,
   isCollapsed,
   onToggleCollapse,
+  anchorRefName,
+  projectAnchorDate,
+  selectionDisabled = false,
 }: SupplierScheduleItemRowProps) {
+  const calculationTooltip = getDateCalculationTooltip(item, anchorRefName, projectAnchorDate);
+  const { toast } = useToast();
   const [actualDate, setActualDate] = useState(item.actualDate || '');
   const [plannedDate, setPlannedDate] = useState(item.plannedDate || '');
   const [status, setStatus] = useState(item.status);
@@ -744,7 +1058,7 @@ function SupplierScheduleItemRow({
 
   async function handleActualDateCommit(nextDate: string) {
     if (!item.supplierScheduleItemId) {
-      alert('Missing schedule item instance');
+      toast({ title: 'Error', description: 'Missing schedule item instance', variant: 'destructive' });
       return;
     }
     const response = await window.sqts.supplierScheduleItemInstances.update({
@@ -754,13 +1068,13 @@ function SupplierScheduleItemRow({
     if (response.success) {
       onUpdate();
     } else {
-      alert(response.error || 'Failed to update actual date');
+      toast({ title: 'Error', description: response.error || 'Failed to update actual date', variant: 'destructive' });
     }
   }
 
   async function handlePlannedDateCommit(nextDate: string) {
     if (!item.supplierScheduleItemId) {
-      alert('Missing schedule item instance');
+      toast({ title: 'Error', description: 'Missing schedule item instance', variant: 'destructive' });
       return;
     }
     const response = await window.sqts.supplierScheduleItemInstances.update({
@@ -771,13 +1085,13 @@ function SupplierScheduleItemRow({
     if (response.success) {
       onUpdate();
     } else {
-      alert(response.error || 'Failed to update planned date');
+      toast({ title: 'Error', description: response.error || 'Failed to update planned date', variant: 'destructive' });
     }
   }
 
   async function handlePlannedOverrideChange(nextValue: boolean) {
     if (!item.supplierScheduleItemId) {
-      alert('Missing schedule item instance');
+      toast({ title: 'Error', description: 'Missing schedule item instance', variant: 'destructive' });
       return;
     }
     const response = await window.sqts.supplierScheduleItemInstances.update({
@@ -789,13 +1103,13 @@ function SupplierScheduleItemRow({
       setPlannedOverride(nextValue);
       onUpdate();
     } else {
-      alert(response.error || 'Failed to update planned date override');
+      toast({ title: 'Error', description: response.error || 'Failed to update planned date override', variant: 'destructive' });
     }
   }
 
   async function handleStatusChange(nextStatus: ActivityStatus) {
     if (!item.supplierScheduleItemId) {
-      alert('Missing schedule item instance');
+      toast({ title: 'Error', description: 'Missing schedule item instance', variant: 'destructive' });
       return;
     }
     const updates: { status: ActivityStatus; actualDate?: string } = { status: nextStatus };
@@ -818,13 +1132,13 @@ function SupplierScheduleItemRow({
       }
       onUpdate();
     } else {
-      alert(response.error || 'Failed to update status');
+      toast({ title: 'Error', description: response.error || 'Failed to update status', variant: 'destructive' });
     }
   }
 
   async function handleLockChange(nextValue: boolean) {
     if (!item.supplierScheduleItemId) {
-      alert('Missing schedule item instance');
+      toast({ title: 'Error', description: 'Missing schedule item instance', variant: 'destructive' });
       return;
     }
     const response = await window.sqts.supplierScheduleItemInstances.update({
@@ -835,12 +1149,22 @@ function SupplierScheduleItemRow({
       setLocked(nextValue);
       onUpdate();
     } else {
-      alert(response.error || 'Failed to update lock');
+      toast({ title: 'Error', description: response.error || 'Failed to update lock', variant: 'destructive' });
     }
   }
 
   return (
     <TableRow>
+      <TableCell>
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={(event) => onSelectChange(event.target.checked)}
+          disabled={selectionDisabled || locked}
+          className="h-4 w-4"
+          aria-label={`Select ${item.name}`}
+        />
+      </TableCell>
       <TableCell>
         <TypeBadge kind={item.kind} />
       </TableCell>
@@ -869,6 +1193,7 @@ function SupplierScheduleItemRow({
           onBlur={() => plannedOverride && handlePlannedDateCommit(plannedDate)}
           disabled={locked || !plannedOverride}
           className="w-36"
+          title={calculationTooltip}
         />
       </TableCell>
       <TableCell>
@@ -918,5 +1243,3 @@ function SupplierScheduleItemRow({
     </TableRow>
   );
 }
-
-

@@ -18,8 +18,8 @@ You must do ALL of the following and include evidence:
 - `npm run lint`
 
 2) Run the app:
-- `npm run electron:dev` for any change that is not renderer-only styling/layout
 - `npm run dev` is allowed ONLY for renderer-only styling/layout changes (no routing/state/logic changes)
+- Do NOT run `npm run electron:dev`; if full Electron verification is needed, ask the user to run it and report results
 
 3) Manual verification in the running app for the changed feature(s)
 
@@ -57,7 +57,7 @@ Root configs include `vite.config.ts`, `tsconfig*.json`, and `tailwind.config.js
 
 Development:
 - `npm run dev` - renderer in browser for fast UI iteration
-- `npm run electron:dev` - full Electron app (preferred for any IPC/db work)
+- `npm run electron:dev` - full Electron app (user-run only; do not run during verification)
 
 Quality gates (required by Verification Gate):
 - `npm run type-check`

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Info } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -152,6 +153,7 @@ export function ProjectConfigureDates() {
     activityId?: string;
   }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [milestoneDates, setMilestoneDates] = useState<Record<number, string>>({});
@@ -238,7 +240,7 @@ export function ProjectConfigureDates() {
     setSaving(false);
     const failures = results.filter((result) => !result.success);
     if (failures.length > 0) {
-      alert('Some milestone dates failed to save. Please try again.');
+      toast({ title: 'Error', description: 'Some milestone dates failed to save. Please try again.', variant: 'destructive' });
       return false;
     }
     await loadProjectDetail();
@@ -281,12 +283,14 @@ export function ProjectConfigureDates() {
     const response = await window.sqts.projects.propagateChanges(projectDetail.id);
     setPropagating(false);
     if (!response.success || !response.data) {
-      alert(response.error || 'Failed to propagate changes.');
+      toast({ title: 'Error', description: response.error || 'Failed to propagate changes.', variant: 'destructive' });
       return;
     }
-    alert(
-      `Propagation complete. Updated ${response.data.updated.length}, skipped ${response.data.skipped.length}.`
-    );
+    toast({
+      title: 'Success',
+      description: `Propagation complete. Updated ${response.data.updated.length}, skipped ${response.data.skipped.length}.`,
+      variant: 'success',
+    });
   }
 
   async function handleSyncFromTemplate() {
@@ -300,7 +304,7 @@ export function ProjectConfigureDates() {
     });
     setSyncing(false);
     if (!response.success) {
-      alert(response.error || 'Failed to sync from template.');
+      toast({ title: 'Error', description: response.error || 'Failed to sync from template.', variant: 'destructive' });
       return;
     }
     await loadProjectDetail();

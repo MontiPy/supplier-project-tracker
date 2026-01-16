@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Info, Plus, Pencil, Trash2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -39,6 +40,7 @@ const anchorTypes: AnchorType[] = [
 export function ActivityTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const templateId = Number(id);
   const [template, setTemplate] = useState<ActivityTemplate | null>(null);
   const [items, setItems] = useState<ActivityTemplateScheduleItem[]>([]);
@@ -230,10 +232,10 @@ export function ActivityTemplateDetailPage() {
       (item) => item.kind === 'TASK' && (!item.anchorRefId || item.anchorType !== 'SCHEDULE_ITEM')
     );
     if (invalidTasks.length > 0) {
-      alert('Some tasks are missing a milestone anchor. Please fix them before continuing.');
+      toast({ title: 'Validation Failed', description: 'Some tasks are missing a milestone anchor. Please fix them before continuing.', variant: 'destructive' });
       return;
     }
-    alert('Schedule template looks valid.');
+    toast({ title: 'Success', description: 'Schedule template looks valid.', variant: 'success' });
   }
 
   if (!template) {

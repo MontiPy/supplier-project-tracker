@@ -119,6 +119,21 @@ function getUseBusinessDaysSetting(): boolean {
   return result?.value === 'true';
 }
 
+function touchProject(projectId: number): void {
+  run('UPDATE projects SET updated_at = datetime(\'now\') WHERE id = ?', [projectId]);
+}
+
+function touchProjectByActivityId(projectActivityId: number): void {
+  const activity = queryOne<{ project_id: number }>(
+    'SELECT project_id FROM project_activities WHERE id = ?',
+    [projectActivityId]
+  );
+  if (activity) {
+    touchProject(activity.project_id);
+  }
+}
+
+
 function getPropagationSettings(): {
   skipComplete: boolean;
   skipLocked: boolean;
@@ -185,13 +200,17 @@ function compareWithComparator(
   value: string,
   rankOrder: string[]
 ): boolean {
+  console.log('[Applicability Compare] subject:', JSON.stringify(subject), 'comparator:', comparator, 'value:', JSON.stringify(value));
   if (!subject) {
+    console.log('[Applicability Compare] subject is null/empty, returning false');
     return false;
   }
 
   switch (comparator) {
     case 'EQ':
-      return subject === value;
+      const eqResult = subject === value;
+      console.log('[Applicability Compare] EQ result:', eqResult, 'subject===value:', subject, '===', value);
+      return eqResult;
     case 'NEQ':
       return subject !== value;
     case 'IN': {
@@ -274,13 +293,19 @@ function shouldIncludeActivity(activityTemplateId: number, context: Applicabilit
     [activityTemplateId]
   );
 
+  console.log('[Applicability] Template ID:', activityTemplateId, 'Context:', JSON.stringify(context));
+  console.log('[Applicability] Rules found:', rules.length, rules);
+
   if (rules.length === 0) {
+    console.log('[Applicability] No rules - including activity');
     return true;
   }
 
   let hasEnabledRule = false;
   for (const rule of rules) {
+    console.log('[Applicability] Rule:', rule, 'enabled:', rule.enabled, 'typeof:', typeof rule.enabled);
     if (!rule.enabled) {
+      console.log('[Applicability] Rule disabled, skipping');
       continue;
     }
     hasEnabledRule = true;
@@ -288,11 +313,15 @@ function shouldIncludeActivity(activityTemplateId: number, context: Applicabilit
       'SELECT subject_type, comparator, value FROM activity_template_applicability_clauses WHERE rule_id = ?',
       [rule.id]
     );
-    if (evaluateApplicabilityRule(rule, clauses, context)) {
+    console.log('[Applicability] Clauses for rule', rule.id, ':', clauses);
+    const ruleResult = evaluateApplicabilityRule(rule, clauses, context);
+    console.log('[Applicability] Rule evaluation result:', ruleResult);
+    if (ruleResult) {
       return true;
     }
   }
 
+  console.log('[Applicability] hasEnabledRule:', hasEnabledRule, 'returning:', !hasEnabledRule);
   return !hasEnabledRule;
 }
 
@@ -1141,8 +1170,8 @@ function handleProjectsCreate(_event: any, params: CreateProjectParams): APIResp
       version && version.trim() !== '' ? version.trim() : formatVersionDate(new Date());
 
     const result = run(
-      `INSERT INTO projects (name, version, default_anchor_rule, project_anchor_date)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO projects (name, version, default_anchor_rule, project_anchor_date, updated_at)
+       VALUES (?, ?, ?, ?, datetime('now'))`,
       [name, finalVersion, defaultAnchorRule || null, projectAnchorDate || null]
     );
 
@@ -1183,6 +1212,7 @@ function handleProjectsUpdate(_event: any, params: UpdateProjectParams): APIResp
       return createErrorResponse('No fields to update');
     }
 
+    updates.push('updated_at = datetime(\'now\')');
     values.push(id);
     run(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`, values);
 
@@ -1340,6 +1370,7 @@ function handleProjectActivitiesCreate(
       result.lastInsertRowid,
     ]);
 
+    touchProject(projectId);
     return createSuccessResponse(toCamelCase<ProjectActivity>(activity));
   } catch (error) {
     console.error('Error creating project activity:', error);
@@ -1361,6 +1392,9 @@ function handleProjectActivitiesUpdate(
     run('UPDATE project_activities SET sort_order = ? WHERE id = ?', [sortOrder, id]);
 
     const activity = queryOne('SELECT * FROM project_activities WHERE id = ?', [id]);
+    if (activity) {
+      touchProject(activity.project_id);
+    }
     return createSuccessResponse(toCamelCase<ProjectActivity>(activity));
   } catch (error) {
     console.error('Error updating project activity:', error);
@@ -1370,12 +1404,19 @@ function handleProjectActivitiesUpdate(
 
 function handleProjectActivitiesDelete(_event: any, id: number): APIResponse<void> {
   try {
+    const activity = queryOne<{ project_id: number }>(
+      'SELECT project_id FROM project_activities WHERE id = ?',
+      [id]
+    );
     const result = run('DELETE FROM project_activities WHERE id = ?', [id]);
 
     if (result.changes === 0) {
       return createErrorResponse(`Project activity not found: ${id}`);
     }
 
+    if (activity) {
+      touchProject(activity.project_id);
+    }
     return createSuccessResponse(undefined);
   } catch (error) {
     console.error('Error deleting project activity:', error);
@@ -1533,6 +1574,7 @@ function handleProjectActivitiesSyncFromTemplate(
       );
     }
 
+    touchProjectByActivityId(projectActivityId);
     return createSuccessResponse(toCamelCase<ProjectActivity>(activity));
   } catch (error) {
     console.error('Error syncing project activity from template:', error);
@@ -1676,6 +1718,7 @@ function handleScheduleItemsCreate(
       result.lastInsertRowid,
     ]);
 
+    touchProjectByActivityId(projectActivityId);
     return createSuccessResponse(toCamelCase<ProjectScheduleItem>(item));
   } catch (error) {
     console.error('Error creating schedule item:', error);
@@ -1755,6 +1798,9 @@ function handleScheduleItemsUpdate(
       }
     }
 
+    if (itemRaw) {
+      touchProjectByActivityId(itemRaw.project_activity_id);
+    }
     const item = queryOne('SELECT * FROM project_schedule_items WHERE id = ?', [id]);
 
     return createSuccessResponse(toCamelCase<ProjectScheduleItem>(item));
@@ -1766,12 +1812,19 @@ function handleScheduleItemsUpdate(
 
 function handleScheduleItemsDelete(_event: any, id: number): APIResponse<void> {
   try {
+    const item = queryOne<{ project_activity_id: number }>(
+      'SELECT project_activity_id FROM project_schedule_items WHERE id = ?',
+      [id]
+    );
     const result = run('DELETE FROM project_schedule_items WHERE id = ?', [id]);
 
     if (result.changes === 0) {
       return createErrorResponse(`Schedule item not found: ${id}`);
     }
 
+    if (item) {
+      touchProjectByActivityId(item.project_activity_id);
+    }
     return createSuccessResponse(undefined);
   } catch (error) {
     console.error('Error deleting schedule item:', error);
@@ -2730,6 +2783,7 @@ function handleDashboardGetData(_event: any, filters: DashboardFilters): APIResp
         ssi.planned_date as due_date,
         s.id as supplier_id,
         s.name as supplier_name,
+        sp.id as supplier_project_id,
         p.id as project_id,
         p.name as project_name,
         at.name as activity_name,
@@ -2760,6 +2814,7 @@ function handleDashboardGetData(_event: any, filters: DashboardFilters): APIResp
       dueDate: item.due_date,
       supplierId: item.supplier_id,
       supplierName: item.supplier_name,
+      supplierProjectId: item.supplier_project_id,
       projectId: item.project_id,
       projectName: item.project_name,
       activityName: item.activity_name,
@@ -3088,7 +3143,7 @@ function handleProjectsListWithStats(): APIResponse<ProjectWithStats[]> {
         COUNT(DISTINCT pa.id) as activity_count,
         COUNT(DISTINCT sp.id) as supplier_count,
         MIN(CASE WHEN ssi.status NOT IN ('Complete', 'Not Required') THEN ssi.planned_date END) as next_due,
-        MAX(p.created_at) as last_updated
+        DATE(COALESCE(MAX(p.updated_at), MAX(p.created_at))) as last_updated
        FROM projects p
        LEFT JOIN project_activities pa ON p.id = pa.project_id
        LEFT JOIN supplier_projects sp ON p.id = sp.project_id

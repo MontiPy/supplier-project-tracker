@@ -12,9 +12,11 @@ import { SupplierProjectDetailPage } from './pages/SupplierProjects/SupplierProj
 import { PartsList } from './pages/Parts/PartsList';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { ReportsPage } from './pages/Reports/ReportsPage';
+import { Toaster } from './components/ui/toaster';
 
 function App() {
   return (
+    <>
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
@@ -35,6 +37,8 @@ function App() {
         <Route path="/reports" element={<ReportsPage />} />
       </Routes>
     </Layout>
+    <Toaster />
+    </>
   );
 }
 

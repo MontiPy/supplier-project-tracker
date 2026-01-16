@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
 import type { ActivityTemplate } from '../../../shared/types';
 
 interface AddActivityDialogProps {
@@ -24,6 +25,7 @@ export default function AddActivityDialog({
   projectId,
   onSuccess,
 }: AddActivityDialogProps) {
+  const { toast } = useToast();
   const [templates, setTemplates] = useState<ActivityTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -51,7 +53,7 @@ export default function AddActivityDialog({
     e.preventDefault();
 
     if (!selectedTemplateId) {
-      alert('Please select an activity template');
+      toast({ title: 'Error', description: 'Please select an activity template', variant: 'destructive' });
       return;
     }
 
@@ -68,7 +70,7 @@ export default function AddActivityDialog({
       onSuccess();
       setSelectedTemplateId(null);
     } else {
-      alert(response.error || 'Failed to add activity');
+      toast({ title: 'Error', description: response.error || 'Failed to add activity', variant: 'destructive' });
     }
   }
 

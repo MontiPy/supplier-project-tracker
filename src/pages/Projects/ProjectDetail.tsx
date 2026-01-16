@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, RefreshCcw, Share2, Users } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCcw, Share2, Users } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -21,7 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Breadcrumb } from '@/components/ui/breadcrumb';
-import { VersionBadge, CategoryBadge } from '@/components/ui/status-badge';
+import { VersionBadge, CategoryBadge, RankBadge } from '@/components/ui/status-badge';
 import AddActivityDialog from './AddActivityDialog';
 import PropagationPreviewModal from './PropagationPreviewModal';
 import type { ProjectDetail, ProjectActivityDetail, SupplierProject, AuditEvent } from '../../../shared/types';
@@ -29,6 +30,7 @@ import type { ProjectDetail, ProjectActivityDetail, SupplierProject, AuditEvent 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +103,7 @@ export default function ProjectDetailPage() {
       setSyncDialogOpen(false);
       loadProjectDetail();
     } else {
-      alert(response.error || 'Failed to sync from template');
+      toast({ title: 'Error', description: response.error || 'Failed to sync from template', variant: 'destructive' });
     }
   }
 
@@ -139,12 +141,12 @@ export default function ProjectDetailPage() {
     const response = await window.sqts.projects.propagateChanges(projectDetail.id);
     setApplyingPropagation(false);
     if (!response.success || !response.data) {
-      alert(response.error || 'Failed to apply changes.');
+      toast({ title: 'Error', description: response.error || 'Failed to apply changes.', variant: 'destructive' });
       return;
     }
     const updated = response.data.updated.length;
     const skipped = response.data.skipped.length;
-    alert(`Applied ${updated} updates. Skipped ${skipped} items.`);
+    toast({ title: 'Success', description: `Applied ${updated} updates. Skipped ${skipped} items.`, variant: 'success' });
   }
 
   if (loading) {
@@ -217,6 +219,17 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
+      {/* Propagation Warning Banner */}
+      {supplierProjects.length > 0 && projectDetail.activities.length > 0 && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+          <AlertTriangle className="h-5 w-5 flex-shrink-0 text-amber-600" />
+          <p className="text-sm">
+            Changes to project dates may need to be propagated to {supplierProjects.length} supplier{supplierProjects.length !== 1 ? 's' : ''}.
+            Click <button onClick={() => setPropagationModalOpen(true)} className="font-medium underline hover:text-amber-900">'Propagation Preview'</button> to review and apply changes.
+          </p>
+        </div>
+      )}
+
       <Tabs defaultValue="activities">
         <TabsList className="mb-6">
           <TabsTrigger value="activities">Activities</TabsTrigger>
@@ -276,6 +289,7 @@ export default function ProjectDetailPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Supplier</TableHead>
+                        <TableHead>NMR Rank</TableHead>
                         <TableHead>Supplier Anchor Date</TableHead>
                         <TableHead>Created</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -285,6 +299,9 @@ export default function ProjectDetailPage() {
                       {supplierProjects.map((sp) => (
                         <TableRow key={sp.id}>
                           <TableCell className="font-medium">{sp.supplierName || `Supplier ${sp.supplierId}`}</TableCell>
+                          <TableCell>
+                            <RankBadge rank={sp.supplierProjectNmrRank ?? null} />
+                          </TableCell>
                           <TableCell>{sp.supplierAnchorDate || '-'}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(sp.createdAt)}</TableCell>
                           <TableCell className="text-right">

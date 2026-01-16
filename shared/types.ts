@@ -28,6 +28,7 @@ export interface Project {
   defaultAnchorRule: string | null;
   projectAnchorDate: string | null;
   createdAt: string;
+  updatedAt: string | null;
 }
 
 // ============================================================================
@@ -531,6 +532,7 @@ export interface ActionableItem {
   dueDate: string | null;
   supplierId: number;
   supplierName: string;
+  supplierProjectId: number;
   projectId: number;
   projectName: string;
   activityName: string;

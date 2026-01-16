@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
 import type { ScheduleItemKind, AnchorType, ScheduleItemWithDates } from '../../../shared/types';
 
 interface ScheduleItemDialogProps {
@@ -25,6 +26,7 @@ export default function ScheduleItemDialog({
   activityId,
   onSuccess,
 }: ScheduleItemDialogProps) {
+  const { toast } = useToast();
   const [kind, setKind] = useState<ScheduleItemKind>('MILESTONE');
   const [name, setName] = useState('');
   const [anchorType, setAnchorType] = useState<AnchorType>('FIXED_DATE');
@@ -68,23 +70,23 @@ export default function ScheduleItemDialog({
     e.preventDefault();
 
     if (!activityId) {
-      alert('No activity selected');
+      toast({ title: 'Error', description: 'No activity selected', variant: 'destructive' });
       return;
     }
 
     // Validation
     if (!name.trim()) {
-      alert('Please enter a name');
+      toast({ title: 'Error', description: 'Please enter a name', variant: 'destructive' });
       return;
     }
 
     if (anchorType === 'FIXED_DATE' && !fixedDate) {
-      alert('Please enter a fixed date');
+      toast({ title: 'Error', description: 'Please enter a fixed date', variant: 'destructive' });
       return;
     }
 
     if (anchorType === 'SCHEDULE_ITEM' && !anchorRefId) {
-      alert('Please select a reference schedule item');
+      toast({ title: 'Error', description: 'Please select a reference schedule item', variant: 'destructive' });
       return;
     }
 
@@ -105,7 +107,7 @@ export default function ScheduleItemDialog({
       onOpenChange(false);
       onSuccess();
     } else {
-      alert(response.error || 'Failed to create schedule item');
+      toast({ title: 'Error', description: response.error || 'Failed to create schedule item', variant: 'destructive' });
     }
   }
 

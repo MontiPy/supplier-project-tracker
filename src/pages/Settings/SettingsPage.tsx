@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X, Plus, RotateCcw } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -25,6 +26,7 @@ const defaultSettings: AppSettings = {
 };
 
 export function SettingsPage() {
+  const { toast } = useToast();
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -112,13 +114,13 @@ export function SettingsPage() {
     const response = await window.sqts.settings.exportDatabase();
     setExporting(false);
     if (!response.success || !response.data) {
-      alert(response.error || 'Failed to export database');
+      toast({ title: 'Error', description: response.error || 'Failed to export database', variant: 'destructive' });
       return;
     }
     if (response.data.canceled) {
       return;
     }
-    alert(`Backup exported to ${response.data.path}`);
+    toast({ title: 'Success', description: `Backup exported to ${response.data.path}`, variant: 'success' });
   }
 
   async function handleImportDatabase() {
@@ -132,13 +134,13 @@ export function SettingsPage() {
     const response = await window.sqts.settings.importDatabase();
     setImporting(false);
     if (!response.success || !response.data) {
-      alert(response.error || 'Failed to import database');
+      toast({ title: 'Error', description: response.error || 'Failed to import database', variant: 'destructive' });
       return;
     }
     if (response.data.canceled) {
       return;
     }
-    alert('Backup imported. The app will reload to reflect the new data.');
+    toast({ title: 'Success', description: 'Backup imported. The app will reload to reflect the new data.', variant: 'success' });
     window.location.reload();
   }
 
@@ -157,10 +159,10 @@ export function SettingsPage() {
     const response = await window.sqts.settings.wipeDatabase();
     setWiping(false);
     if (!response.success) {
-      alert(response.error || 'Failed to wipe database');
+      toast({ title: 'Error', description: response.error || 'Failed to wipe database', variant: 'destructive' });
       return;
     }
-    alert('All data wiped. The app will reload with a fresh database.');
+    toast({ title: 'Success', description: 'All data wiped. The app will reload with a fresh database.', variant: 'success' });
     window.location.reload();
   }
 
