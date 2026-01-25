@@ -44,8 +44,6 @@ import type {
 
 const anchorTypes: AnchorType[] = [
   'FIXED_DATE',
-  'PROJECT_ANCHOR',
-  'SUPPLIER_ANCHOR',
   'SCHEDULE_ITEM',
   'COMPLETION',
 ];
@@ -571,9 +569,7 @@ export function ActivityLibraryPage() {
 
   function getNotes(item: ActivityTemplateScheduleItem) {
     if (item.kind === 'MILESTONE') {
-      return item.anchorType === 'PROJECT_ANCHOR'
-        ? 'Set at project level'
-        : 'Set at activity level';
+      return 'Set at project level';
     }
     if (item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId) {
       const anchorName = itemById.get(item.anchorRefId)?.name || 'milestone';
@@ -732,7 +728,7 @@ export function ActivityLibraryPage() {
                   <div className="text-sm">
                     <span className="font-medium">Where logic lives:</span>{' '}
                     Templates define schedule structure and offset rules.
-                    Milestones with <code className="bg-blue-100 px-1 rounded">PROJECT_ANCHOR</code> have dates set at the project level.
+                    Milestones have dates set at the project level.
                     Tasks derive their dates from milestone anchors using offset days.
                   </div>
                 </div>

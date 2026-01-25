@@ -12,6 +12,14 @@ export interface Supplier {
   createdAt: string;
 }
 
+export interface SupplierLocationCode {
+  id: number;
+  supplierId: number;
+  supplierNumber: string;
+  locationCode: string;
+  createdAt: string;
+}
+
 export interface ActivityTemplate {
   id: number;
   name: string;
@@ -26,7 +34,6 @@ export interface Project {
   name: string;
   version: string;
   defaultAnchorRule: string | null;
-  projectAnchorDate: string | null;
   createdAt: string;
   updatedAt: string | null;
 }
@@ -47,8 +54,6 @@ export type ScheduleItemKind = 'MILESTONE' | 'TASK';
 
 export type AnchorType =
   | 'FIXED_DATE'
-  | 'PROJECT_ANCHOR'
-  | 'SUPPLIER_ANCHOR'
   | 'SCHEDULE_ITEM'
   | 'COMPLETION';
 
@@ -77,7 +82,6 @@ export interface SupplierProject {
   supplierId: number;
   projectId: number;
   projectVersion: string;
-  supplierAnchorDate: string | null;
   supplierProjectNmrRank?: string | null;
   supplierName?: string;
   projectName?: string;
@@ -177,7 +181,6 @@ export interface SupplierActivityAttachment {
 export interface SupplierProjectSummary extends SupplierProject {
   supplierName: string;
   projectName: string;
-  projectAnchorDate: string | null;
 }
 
 export interface SupplierScheduleItemDetail extends ProjectScheduleItem {
@@ -199,7 +202,6 @@ export interface SupplierProjectActivityDetail extends SupplierActivityInstance 
 export interface SupplierProjectDetail extends SupplierProject {
   supplierName: string;
   projectName: string;
-  projectAnchorDate: string | null;
   supplierProjectNmrRank?: string | null;
   activities: SupplierProjectActivityDetail[];
 }
@@ -248,6 +250,12 @@ export interface UpdateSupplierParams {
   notes?: string;
 }
 
+export interface CreateSupplierLocationCodeParams {
+  supplierId: number;
+  supplierNumber: string;
+  locationCode: string;
+}
+
 // Activity Template operations
 export interface CreateActivityTemplateParams {
   name: string;
@@ -267,7 +275,6 @@ export interface CreateProjectParams {
   name: string;
   version?: string;
   defaultAnchorRule?: string;
-  projectAnchorDate?: string;
 }
 
 export interface UpdateProjectParams {
@@ -275,7 +282,6 @@ export interface UpdateProjectParams {
   name?: string;
   version?: string;
   defaultAnchorRule?: string;
-  projectAnchorDate?: string;
 }
 
 // Project Activity operations
@@ -371,13 +377,11 @@ export interface SyncProjectActivityFromTemplateParams {
 export interface ApplySupplierProjectParams {
   supplierId: number;
   projectId: number;
-  supplierAnchorDate?: string;
   supplierProjectNmrRank?: string | null;
 }
 
 export interface UpdateSupplierProjectParams {
   id: number;
-  supplierAnchorDate?: string;
   supplierProjectNmrRank?: string | null;
 }
 

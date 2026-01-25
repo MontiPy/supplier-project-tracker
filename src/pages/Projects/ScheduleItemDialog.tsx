@@ -175,7 +175,6 @@ export default function ScheduleItemDialog({
               >
                 <option value="FIXED_DATE">Fixed Date</option>
                 <option value="SCHEDULE_ITEM">Schedule Item (Milestone Reference)</option>
-                <option value="PROJECT_ANCHOR">Project Anchor</option>
               </select>
             </div>
 
@@ -242,21 +241,6 @@ export default function ScheduleItemDialog({
               </>
             )}
 
-            {anchorType === 'PROJECT_ANCHOR' && (
-              <div className="space-y-2">
-                <Label htmlFor="projectOffsetDays">Offset Days from Project Anchor</Label>
-                <Input
-                  id="projectOffsetDays"
-                  type="number"
-                  value={offsetDays}
-                  onChange={(e) => setOffsetDays(Number(e.target.value))}
-                  placeholder="0"
-                />
-                <p className="text-xs text-gray-500">
-                  Note: Project anchor date is not yet configured. This will be available in Phase 3.
-                </p>
-              </div>
-            )}
           </div>
 
           <DialogFooter>

@@ -67,7 +67,7 @@ export function SupplierProjectDetailPage() {
     const response = await window.sqts.supplierProjects.getDetail(Number(id));
     if (response.success && response.data) {
       setDetail(response.data);
-      setExpandedActivities(new Set(response.data.activities.map((activity) => activity.id)));
+      setExpandedActivities(new Set());
     }
     setLoading(false);
   }
@@ -102,6 +102,21 @@ export function SupplierProjectDetailPage() {
     }
     return allSupplierProjects.filter((sp) => sp.projectId === detail.projectId);
   }, [allSupplierProjects, detail]);
+
+  const switcherOptions = useMemo(() => {
+    if (!detail) {
+      return [];
+    }
+    return sameProjectSuppliers.length > 0 ? sameProjectSuppliers : [detail as SupplierProject];
+  }, [detail, sameProjectSuppliers]);
+
+  const selectedSupplierLabel = useMemo(() => {
+    if (!detail) {
+      return '';
+    }
+    const current = switcherOptions.find((sp) => sp.id === detail.id);
+    return current?.supplierName || detail.supplierName || `Supplier ${detail.supplierId}`;
+  }, [detail, switcherOptions]);
 
   const summary = useMemo(() => {
     if (!detail) {
@@ -217,44 +232,48 @@ export function SupplierProjectDetailPage() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            {sameProjectSuppliers.length > 1 && (
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Supplier Project</span>
               <Select
                 value={String(detail.id)}
                 onValueChange={(value: string) => navigate(`/supplier-projects/${value}`)}
               >
                 <SelectTrigger className="w-48">
-                  <SelectValue />
+                  <span className="truncate">{selectedSupplierLabel}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {sameProjectSuppliers.map((sp) => (
+                  {switcherOptions.map((sp) => (
                     <SelectItem key={sp.id} value={String(sp.id)}>
                       {sp.supplierName || `Supplier ${sp.supplierId}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            )}
+            </div>
             {nmrRanks.length > 0 && (
-              <Select
-                value={detail.supplierProjectNmrRank || defaultRankValue}
-                onValueChange={handleProjectRankChange}
-                disabled={updatingRank}
-              >
-                <SelectTrigger className="w-56">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={defaultRankValue}>
-                    No project rank
-                  </SelectItem>
-                  {nmrRanks.map((rank) => (
-                    <SelectItem key={rank} value={rank}>
-                      {rank}
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">Project NMR Rank</span>
+                <Select
+                  value={detail.supplierProjectNmrRank || defaultRankValue}
+                  onValueChange={handleProjectRankChange}
+                  disabled={updatingRank}
+                >
+                  <SelectTrigger className="w-56">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={defaultRankValue}>
+                      No project rank
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    {nmrRanks.map((rank) => (
+                      <SelectItem key={rank} value={rank}>
+                        {rank}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             )}
           </div>
         </div>
@@ -273,17 +292,9 @@ export function SupplierProjectDetailPage() {
 
       {/* Inline Summary Row */}
       <div className="mb-6 flex flex-wrap items-center gap-6 p-4 bg-muted/50 rounded-lg">
-        <div className="flex items-center gap-3">
-          <div className="text-sm text-muted-foreground">Progress</div>
-          <div className="flex items-center gap-2">
-            <div className="w-24 h-2 rounded bg-gray-200">
-              <div
-                className="h-2 rounded bg-green-600"
-                style={{ width: `${summary.progressPercent}%` }}
-              />
-            </div>
-            <span className="text-sm font-medium">{summary.progressPercent}%</span>
-          </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Progress:</span>
+          <span className="text-sm font-medium">{summary.progressPercent}%</span>
           <span className="text-sm text-muted-foreground">
             ({summary.complete} of {summary.total})
           </span>
@@ -319,7 +330,6 @@ export function SupplierProjectDetailPage() {
               expanded={expandedActivities.has(activity.id)}
               onToggle={() => toggleActivity(activity.id)}
               onUpdate={loadDetail}
-              projectAnchorDate={detail.projectAnchorDate}
             />
           ))
         )}
@@ -349,10 +359,9 @@ interface SupplierActivityCardProps {
   expanded: boolean;
   onToggle: () => void;
   onUpdate: () => void;
-  projectAnchorDate?: string | null;
 }
 
-function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectAnchorDate }: SupplierActivityCardProps) {
+function SupplierActivityCard({ activity, expanded, onToggle, onUpdate }: SupplierActivityCardProps) {
   const { toast } = useToast();
   const [activeFilter, setActiveFilter] = useState<'all' | 'incomplete' | 'dueSoon' | 'overdue'>(
     'all'
@@ -671,6 +680,7 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectA
           key={`milestone-${row.item.id}`}
           item={row.item}
           onUpdate={onUpdate}
+          rowLevel="milestone"
           taskCount={tasks.length}
           isCollapsed={isCollapsed}
           onToggleCollapse={() => {
@@ -683,7 +693,6 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectA
             setCollapsedMilestones(next);
           }}
           anchorRefName={row.item.anchorRefId ? itemNameMap.get(row.item.anchorRefId) : undefined}
-          projectAnchorDate={projectAnchorDate}
           isSelected={selectedItems.has(row.item.supplierScheduleItemId)}
           onSelectChange={(nextSelected) =>
             handleSelectionChange(row.item.supplierScheduleItemId, nextSelected)
@@ -700,9 +709,8 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectA
                 key={`task-${task.id}`}
                 item={task}
                 onUpdate={onUpdate}
-                isChild
+                rowLevel="task"
                 anchorRefName={task.anchorRefId ? itemNameMap.get(task.anchorRefId) : undefined}
-                projectAnchorDate={projectAnchorDate}
                 isSelected={selectedItems.has(task.supplierScheduleItemId)}
                 onSelectChange={(nextSelected) =>
                   handleSelectionChange(task.supplierScheduleItemId, nextSelected)
@@ -724,8 +732,8 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectA
         key={`item-${row.item.id}`}
         item={row.item}
         onUpdate={onUpdate}
+        rowLevel="item"
         anchorRefName={row.item.anchorRefId ? itemNameMap.get(row.item.anchorRefId) : undefined}
-        projectAnchorDate={projectAnchorDate}
         isSelected={selectedItems.has(row.item.supplierScheduleItemId)}
         onSelectChange={(nextSelected) =>
           handleSelectionChange(row.item.supplierScheduleItemId, nextSelected)
@@ -880,7 +888,7 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectA
                   </div>
                 </div>
                 <div className="rounded-md border">
-                  <Table>
+                  <Table className="table-fixed">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-12">
@@ -894,12 +902,12 @@ function SupplierActivityCard({ activity, expanded, onToggle, onUpdate, projectA
                             aria-label="Select all visible items"
                           />
                         </TableHead>
-                        <TableHead className="w-16">Type</TableHead>
-                        <TableHead>Item</TableHead>
-                        <TableHead>Planned Date</TableHead>
-                        <TableHead>Actual Date</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Flags</TableHead>
+                        <TableHead className="w-20">Type</TableHead>
+                        <TableHead className="w-[320px]">Item</TableHead>
+                        <TableHead className="w-40">Planned Date</TableHead>
+                        <TableHead className="w-40">Actual Date</TableHead>
+                        <TableHead className="w-40">Status</TableHead>
+                        <TableHead className="w-48">Flags</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -976,19 +984,17 @@ interface SupplierScheduleItemRowProps {
   onUpdate: () => void;
   isSelected: boolean;
   onSelectChange: (nextSelected: boolean) => void;
-  isChild?: boolean;
+  rowLevel?: 'item' | 'milestone' | 'task';
   taskCount?: number;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   anchorRefName?: string;
-  projectAnchorDate?: string | null;
   selectionDisabled?: boolean;
 }
 
 function getDateCalculationTooltip(
   item: SupplierScheduleItemDetail,
-  anchorRefName?: string,
-  projectAnchorDate?: string | null
+  anchorRefName?: string
 ): string {
   const offset = item.offsetDays;
   const offsetStr = offset
@@ -1000,12 +1006,6 @@ function getDateCalculationTooltip(
   switch (item.anchorType) {
     case 'FIXED_DATE':
       return item.fixedDate ? `Fixed date: ${item.fixedDate}` : 'Fixed date (not set)';
-    case 'PROJECT_ANCHOR':
-      return projectAnchorDate
-        ? `Project anchor (${projectAnchorDate}) ${offsetStr}`.trim()
-        : `Project anchor ${offsetStr}`.trim();
-    case 'SUPPLIER_ANCHOR':
-      return `Supplier anchor ${offsetStr}`.trim();
     case 'SCHEDULE_ITEM':
       return anchorRefName
         ? `${anchorRefName} ${offsetStr}`.trim()
@@ -1032,15 +1032,22 @@ function SupplierScheduleItemRow({
   onUpdate,
   isSelected,
   onSelectChange,
-  isChild = false,
+  rowLevel = 'item',
   taskCount,
   isCollapsed,
   onToggleCollapse,
   anchorRefName,
-  projectAnchorDate,
   selectionDisabled = false,
 }: SupplierScheduleItemRowProps) {
-  const calculationTooltip = getDateCalculationTooltip(item, anchorRefName, projectAnchorDate);
+  const calculationTooltip = getDateCalculationTooltip(item, anchorRefName);
+  const rowClassName =
+    rowLevel === 'milestone'
+      ? 'bg-muted/30'
+      : rowLevel === 'task'
+      ? 'bg-muted/10'
+      : '';
+  const indentClassName =
+    rowLevel === 'task' ? 'pl-8' : rowLevel === 'milestone' ? 'pl-3' : 'pl-2';
   const { toast } = useToast();
   const [actualDate, setActualDate] = useState(item.actualDate || '');
   const [plannedDate, setPlannedDate] = useState(item.plannedDate || '');
@@ -1154,8 +1161,8 @@ function SupplierScheduleItemRow({
   }
 
   return (
-    <TableRow>
-      <TableCell>
+    <TableRow className={rowClassName}>
+      <TableCell className="w-12">
         <input
           type="checkbox"
           checked={isSelected}
@@ -1165,11 +1172,11 @@ function SupplierScheduleItemRow({
           aria-label={`Select ${item.name}`}
         />
       </TableCell>
-      <TableCell>
+      <TableCell className="w-20">
         <TypeBadge kind={item.kind} />
       </TableCell>
-      <TableCell className="font-medium">
-        <div className={`flex items-center gap-2 ${isChild ? 'pl-6' : ''}`}>
+      <TableCell className="w-[320px] font-medium">
+        <div className={`flex items-center gap-2 ${indentClassName}`}>
           {taskCount && onToggleCollapse ? (
             <button onClick={onToggleCollapse} className="hover:bg-muted p-1 rounded">
               {isCollapsed ? (
@@ -1185,7 +1192,7 @@ function SupplierScheduleItemRow({
           ) : null}
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="w-40">
         <Input
           type="date"
           value={plannedDate}
@@ -1196,7 +1203,7 @@ function SupplierScheduleItemRow({
           title={calculationTooltip}
         />
       </TableCell>
-      <TableCell>
+      <TableCell className="w-40">
         <Input
           type="date"
           value={actualDate}
@@ -1206,7 +1213,7 @@ function SupplierScheduleItemRow({
           className="w-36"
         />
       </TableCell>
-      <TableCell>
+      <TableCell className="w-40">
         <Select
           value={status}
           onValueChange={(value) => handleStatusChange(value as ActivityStatus)}
@@ -1224,7 +1231,7 @@ function SupplierScheduleItemRow({
           </SelectContent>
         </Select>
       </TableCell>
-      <TableCell>
+      <TableCell className="w-48">
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <Switch

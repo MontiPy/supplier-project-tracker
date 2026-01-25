@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, AlertTriangle, Calendar, CheckCircle2, XCircle, Info } from 'lucide-react';
+import { Plus, AlertTriangle, Calendar, CheckCircle2, XCircle, Info, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,11 +14,13 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Breadcrumb } from '@/components/ui/breadcrumb';
-import { StatusBadge, VersionBadge, RankBadge } from '@/components/ui/status-badge';
+import { StatusBadge, RankBadge } from '@/components/ui/status-badge';
 import type {
   Supplier,
+  SupplierLocationCode,
   Project,
   ProjectDetail,
   ProjectActivityDetail,
@@ -34,14 +36,19 @@ export function SupplierDetail() {
   const supplierId = Number(id);
   const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [supplierProjects, setSupplierProjects] = useState<SupplierProjectWithProgress[]>([]);
+  const [supplierLocationCodes, setSupplierLocationCodes] = useState<SupplierLocationCode[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [nmrRanks, setNmrRanks] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingLocationCodes, setLoadingLocationCodes] = useState(false);
   const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [supplierNumberInput, setSupplierNumberInput] = useState('');
+  const [locationCodeInput, setLocationCodeInput] = useState('');
+  const [savingLocationCode, setSavingLocationCode] = useState(false);
+  const [deletingLocationCodeId, setDeletingLocationCodeId] = useState<number | null>(null);
   const [formData, setFormData] = useState<ApplySupplierProjectParams>({
     supplierId: supplierId,
     projectId: 0,
-    supplierAnchorDate: '',
     supplierProjectNmrRank: '',
   });
   const [selectedProjectDetail, setSelectedProjectDetail] = useState<ProjectDetail | null>(null);
@@ -56,6 +63,7 @@ export function SupplierDetail() {
     }
     loadSupplier();
     loadSupplierProjects();
+    loadSupplierLocationCodes();
   }, [supplierId]);
 
   async function loadSupplier() {
@@ -74,6 +82,15 @@ export function SupplierDetail() {
     setLoading(false);
   }
 
+  async function loadSupplierLocationCodes() {
+    setLoadingLocationCodes(true);
+    const response = await window.sqts.supplierLocationCodes.list(supplierId);
+    if (response.success && response.data) {
+      setSupplierLocationCodes(response.data);
+    }
+    setLoadingLocationCodes(false);
+  }
+
   async function loadProjects() {
     const response = await window.sqts.projects.list();
     if (response.success && response.data) {
@@ -82,7 +99,6 @@ export function SupplierDetail() {
         setFormData({
           supplierId: supplierId,
           projectId: response.data[0].id,
-          supplierAnchorDate: '',
           supplierProjectNmrRank: '',
         });
       }
@@ -94,6 +110,71 @@ export function SupplierDetail() {
     if (response.success && response.data) {
       setNmrRanks(response.data.nmrRanks);
     }
+  }
+
+  function isNumericSegment(value: string): boolean {
+    return /^\d+$/.test(value);
+  }
+
+  async function handleAddLocationCode(event?: React.FormEvent) {
+    event?.preventDefault();
+    const supplierNumber = supplierNumberInput.trim();
+    const locationCode = locationCodeInput.trim();
+
+    if (!supplierNumber || !locationCode) {
+      toast({
+        title: 'Missing fields',
+        description: 'Supplier number and location code are required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!isNumericSegment(supplierNumber) || !isNumericSegment(locationCode)) {
+      toast({
+        title: 'Invalid format',
+        description: 'Supplier number and location code must be numeric.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSavingLocationCode(true);
+    const response = await window.sqts.supplierLocationCodes.create({
+      supplierId,
+      supplierNumber,
+      locationCode,
+    });
+
+    if (response.success) {
+      setSupplierNumberInput('');
+      setLocationCodeInput('');
+      await loadSupplierLocationCodes();
+    } else {
+      toast({
+        title: 'Error',
+        description: response.error || 'Failed to add supplier location code',
+        variant: 'destructive',
+      });
+    }
+    setSavingLocationCode(false);
+  }
+
+  async function handleDeleteLocationCode(locationCodeId: number) {
+    setDeletingLocationCodeId(locationCodeId);
+    const response = await window.sqts.supplierLocationCodes.delete(locationCodeId);
+    if (response.success) {
+      setSupplierLocationCodes((prev) =>
+        prev.filter((code) => code.id !== locationCodeId)
+      );
+    } else {
+      toast({
+        title: 'Error',
+        description: response.error || 'Failed to delete supplier location code',
+        variant: 'destructive',
+      });
+    }
+    setDeletingLocationCodeId(null);
   }
 
   // Helper function to evaluate applicability rule on client side for preview
@@ -220,7 +301,6 @@ export function SupplierDetail() {
     const response = await window.sqts.supplierProjects.apply({
       supplierId,
       projectId: formData.projectId,
-      supplierAnchorDate: formData.supplierAnchorDate || undefined,
       supplierProjectNmrRank: formData.supplierProjectNmrRank || undefined,
     });
 
@@ -280,6 +360,95 @@ export function SupplierDetail() {
         </Button>
       </div>
 
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Supplier Number / Location Codes</CardTitle>
+            <span className="text-xs text-muted-foreground">
+              {supplierLocationCodes.length} code{supplierLocationCodes.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Track numeric supplier numbers and location codes (example: 123456-01).
+          </p>
+          {loadingLocationCodes ? (
+            <div className="text-sm text-muted-foreground">Loading codes...</div>
+          ) : supplierLocationCodes.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No supplier codes added yet.</div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Supplier Number</TableHead>
+                    <TableHead>Location Code</TableHead>
+                    <TableHead>Code</TableHead>
+                    <TableHead className="w-14 text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {supplierLocationCodes.map((code) => (
+                    <TableRow key={code.id}>
+                      <TableCell className="font-medium">{code.supplierNumber}</TableCell>
+                      <TableCell>{code.locationCode}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {code.supplierNumber}-{code.locationCode}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteLocationCode(code.id)}
+                          disabled={deletingLocationCodeId === code.id}
+                          aria-label="Remove code"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <form onSubmit={handleAddLocationCode} className="grid gap-3">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+              <div className="grid gap-2">
+                <Label htmlFor="supplierNumber">Supplier Number</Label>
+                <Input
+                  id="supplierNumber"
+                  value={supplierNumberInput}
+                  onChange={(e) => setSupplierNumberInput(e.target.value)}
+                  placeholder="123456"
+                  inputMode="numeric"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="locationCode">Location Code</Label>
+                <Input
+                  id="locationCode"
+                  value={locationCodeInput}
+                  onChange={(e) => setLocationCodeInput(e.target.value)}
+                  placeholder="01"
+                  inputMode="numeric"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button
+                  type="submit"
+                  disabled={savingLocationCode || !supplierNumberInput.trim() || !locationCodeInput.trim()}
+                >
+                  {savingLocationCode ? 'Adding...' : 'Add Code'}
+                </Button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Numeric only. Example: 123456-01.</p>
+          </form>
+        </CardContent>
+      </Card>
+
       <Tabs defaultValue="projects">
         <TabsList className="mb-6">
           <TabsTrigger value="projects">
@@ -314,13 +483,8 @@ export function SupplierDetail() {
                       <div className="flex-1 min-w-0">
                         <CardTitle className="text-lg truncate">{project.projectName}</CardTitle>
                         <div className="flex items-center gap-2 mt-1">
-                          <VersionBadge version={project.projectVersion} />
+                          <span className="text-xs text-muted-foreground">NMR Rank</span>
                           <RankBadge rank={project.supplierProjectNmrRank ?? null} />
-                          {project.activityName && (
-                            <span className="text-xs text-muted-foreground">
-                              {project.activityName}
-                            </span>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -447,36 +611,23 @@ export function SupplierDetail() {
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="supplierAnchorDate">Supplier Anchor Date</Label>
-                    <Input
-                      id="supplierAnchorDate"
-                      type="date"
-                      value={formData.supplierAnchorDate || ''}
-                      onChange={(e) =>
-                        setFormData({ ...formData, supplierAnchorDate: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="supplierProjectNmrRank">Project NMR Rank</Label>
-                    <select
-                      id="supplierProjectNmrRank"
-                      className="h-10 rounded-md border bg-transparent px-3 text-sm"
-                      value={formData.supplierProjectNmrRank || ''}
-                      onChange={(e) =>
-                        setFormData({ ...formData, supplierProjectNmrRank: e.target.value })
-                      }
-                    >
-                      <option value="">No project rank</option>
-                      {nmrRanks.map((rank) => (
-                        <option key={rank} value={rank}>
-                          {rank}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="supplierProjectNmrRank">Project NMR Rank</Label>
+                  <select
+                    id="supplierProjectNmrRank"
+                    className="h-10 rounded-md border bg-transparent px-3 text-sm"
+                    value={formData.supplierProjectNmrRank || ''}
+                    onChange={(e) =>
+                      setFormData({ ...formData, supplierProjectNmrRank: e.target.value })
+                    }
+                  >
+                    <option value="">No project rank</option>
+                    {nmrRanks.map((rank) => (
+                      <option key={rank} value={rank}>
+                        {rank}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

@@ -31,8 +31,6 @@ import type {
 
 const anchorTypes: AnchorType[] = [
   'FIXED_DATE',
-  'PROJECT_ANCHOR',
-  'SUPPLIER_ANCHOR',
   'SCHEDULE_ITEM',
   'COMPLETION',
 ];
@@ -210,9 +208,7 @@ export function ActivityTemplateDetailPage() {
 
   function getNotes(item: ActivityTemplateScheduleItem) {
     if (item.kind === 'MILESTONE') {
-      return item.anchorType === 'PROJECT_ANCHOR'
-        ? 'Set at project level'
-        : 'Set at activity level';
+      return 'Set at project level';
     }
     if (item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId) {
       const anchorName = itemById.get(item.anchorRefId)?.name || 'milestone';

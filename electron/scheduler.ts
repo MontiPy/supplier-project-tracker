@@ -8,15 +8,11 @@ import type { ProjectScheduleItem, ScheduleItemWithDates } from '../shared/types
  * Returns array with computed plannedDate for each item
  *
  * @param scheduleItems - Array of project schedule items
- * @param projectAnchorDate - Optional project-wide anchor date (YYYY-MM-DD)
- * @param supplierAnchorDate - Optional supplier-specific anchor date (YYYY-MM-DD)
  * @param useBusinessDays - If true, offset days skip weekends (Sat/Sun)
  * @returns Array of schedule items with computed planned dates
  */
 export function calculateScheduleDates(
   scheduleItems: ProjectScheduleItem[],
-  projectAnchorDate?: string,
-  supplierAnchorDate?: string,
   useBusinessDays: boolean = false,
   actualDates?: Map<number, string | null>
 ): ScheduleItemWithDates[] {
@@ -38,8 +34,6 @@ export function calculateScheduleDates(
       const plannedDate = calculatePlannedDate(
         item,
         resolvedDates,
-        projectAnchorDate,
-        supplierAnchorDate,
         useBusinessDays,
         actualDates
       );
@@ -97,16 +91,12 @@ export function calculateScheduleDates(
  *
  * @param item - Schedule item to compute date for
  * @param resolvedDates - Map of already-computed dates for other items
- * @param projectAnchorDate - Optional project anchor date
- * @param supplierAnchorDate - Optional supplier anchor date
  * @param useBusinessDays - If true, offset days skip weekends
  * @returns Computed date as YYYY-MM-DD string, or null if cannot compute
  */
 function calculatePlannedDate(
   item: ProjectScheduleItem,
   resolvedDates: Map<number, string>,
-  projectAnchorDate?: string,
-  supplierAnchorDate?: string,
   useBusinessDays: boolean = false,
   actualDates?: Map<number, string | null>
 ): string | null {
@@ -117,24 +107,6 @@ function calculatePlannedDate(
   switch (item.anchorType) {
     case 'FIXED_DATE':
       return item.fixedDate;
-
-    case 'PROJECT_ANCHOR':
-      if (!projectAnchorDate) {
-        return null; // No project anchor configured
-      }
-      if (item.offsetDays === null) {
-        return projectAnchorDate; // No offset, use anchor directly
-      }
-      return addDays(projectAnchorDate, item.offsetDays, useBusinessDays);
-
-    case 'SUPPLIER_ANCHOR':
-      if (!supplierAnchorDate) {
-        return null; // No supplier anchor configured
-      }
-      if (item.offsetDays === null) {
-        return supplierAnchorDate; // No offset, use anchor directly
-      }
-      return addDays(supplierAnchorDate, item.offsetDays, useBusinessDays);
 
     case 'SCHEDULE_ITEM':
       if (item.anchorRefId === null) {

@@ -119,7 +119,7 @@ export function previewPropagation(projectId: number): PropagationPreview {
 
   // 2. Get all supplier projects for this project
   const supplierProjects = query(
-    `SELECT sp.id, sp.supplier_id, sp.supplier_anchor_date, s.name as supplier_name
+    `SELECT sp.id, sp.supplier_id, s.name as supplier_name
      FROM supplier_projects sp
      JOIN suppliers s ON s.id = sp.supplier_id
      WHERE sp.project_id = ?`,
@@ -163,12 +163,6 @@ export function previewPropagation(projectId: number): PropagationPreview {
       [projectId]
     );
 
-    // Get project anchor date
-    const projectAnchorDate = queryOne(
-      'SELECT project_anchor_date FROM projects WHERE id = ?',
-      [projectId]
-    );
-
     const actualDates = new Map(
       instances.map((item: any) => [item.project_schedule_item_id, item.actual_date || null])
     );
@@ -176,8 +170,6 @@ export function previewPropagation(projectId: number): PropagationPreview {
     // Recalculate all dates
     const recalculated = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(projectScheduleItems),
-      projectAnchorDate?.project_anchor_date || undefined,
-      sp.supplier_anchor_date || undefined,
       policy.useBusinessDays,
       actualDates
     );

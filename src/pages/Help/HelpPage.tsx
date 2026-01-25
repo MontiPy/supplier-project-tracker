@@ -103,14 +103,6 @@ export function HelpPage() {
             2026-02-15.
           </li>
           <li>
-            <strong>PROJECT_ANCHOR:</strong> Uses the project anchor date plus an offset. Example:
-            Project Anchor 2026-01-01, offset +14 → 2026-01-15.
-          </li>
-          <li>
-            <strong>SUPPLIER_ANCHOR:</strong> Uses the supplier anchor date plus an offset.
-            Example: Supplier Anchor 2026-01-05, offset +7 → 2026-01-12.
-          </li>
-          <li>
             <strong>SCHEDULE_ITEM:</strong> Uses another schedule item planned date plus an
             offset. Example: Submit Docs anchored to Milestone 2 Due with offset -14.
           </li>
@@ -132,9 +124,6 @@ export function HelpPage() {
           </li>
           <li>
             <strong>Planned Date Override:</strong> Optional manual planned date when enabled.
-          </li>
-          <li>
-            <strong>Supplier Anchor:</strong> Supplier-specific day-0 that shifts schedules.
           </li>
           <li>
             <strong>Lock:</strong> Prevents propagation updates to planned dates.

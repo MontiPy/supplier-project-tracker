@@ -127,6 +127,7 @@ export function SuppliersList() {
             <TableHeader>
               <TableRow>
                 <TableHead>Supplier Name</TableHead>
+                <TableHead>Notes</TableHead>
                 <TableHead className="text-right">Active Projects</TableHead>
                 <TableHead className="text-right">Overdue</TableHead>
                 <TableHead className="text-right">Due Soon (14d)</TableHead>
@@ -142,6 +143,12 @@ export function SuppliersList() {
                   onClick={() => navigate(`/suppliers/${supplier.id}`)}
                 >
                   <TableCell className="font-medium">{supplier.name}</TableCell>
+                  <TableCell
+                    className="max-w-xs truncate text-muted-foreground"
+                    title={supplier.notes || ''}
+                  >
+                    {supplier.notes || '-'}
+                  </TableCell>
                   <TableCell className="text-right">{supplier.activeProjects}</TableCell>
                   <TableCell className="text-right">
                     {supplier.overdueCount > 0 ? (

@@ -39,8 +39,7 @@ function addDays(dateString: string, offsetDays: number): string {
 
 function calculatePlannedDate(
   item: ScheduleItemWithDates,
-  resolvedDates: Map<number, string>,
-  projectAnchorDate?: string
+  resolvedDates: Map<number, string>
 ): string | null {
   if (item.overrideEnabled && item.overrideDate) {
     return item.overrideDate;
@@ -49,15 +48,6 @@ function calculatePlannedDate(
   switch (item.anchorType) {
     case 'FIXED_DATE':
       return item.fixedDate;
-    case 'PROJECT_ANCHOR': {
-      if (!projectAnchorDate) {
-        return null;
-      }
-      if (item.offsetDays === null) {
-        return projectAnchorDate;
-      }
-      return addDays(projectAnchorDate, item.offsetDays);
-    }
     case 'SCHEDULE_ITEM': {
       if (item.anchorRefId === null) {
         return null;
@@ -77,8 +67,7 @@ function calculatePlannedDate(
 }
 
 function calculateScheduleDates(
-  scheduleItems: ScheduleItemWithDates[],
-  projectAnchorDate?: string
+  scheduleItems: ScheduleItemWithDates[]
 ): ScheduleItemWithDates[] {
   const resolvedDates = new Map<number, string>();
   const results: ScheduleItemWithDates[] = [];
@@ -92,7 +81,7 @@ function calculateScheduleDates(
       if (!unprocessed.has(item.id)) {
         continue;
       }
-      const plannedDate = calculatePlannedDate(item, resolvedDates, projectAnchorDate);
+      const plannedDate = calculatePlannedDate(item, resolvedDates);
       if (plannedDate !== null) {
         resolvedDates.set(item.id, plannedDate);
         unprocessed.delete(item.id);
@@ -130,9 +119,6 @@ function getCalculation(item: ScheduleItemWithDates, itemById: Map<number, Sched
   if (item.kind === 'MILESTONE') {
     if (item.anchorType === 'FIXED_DATE') {
       return 'Fixed date';
-    }
-    if (item.anchorType === 'PROJECT_ANCHOR') {
-      return 'Project-set';
     }
     return item.anchorType.replace('_', ' ');
   }
@@ -213,12 +199,9 @@ export function ProjectConfigureDates() {
         nextDates[item.id] = item.fixedDate || '';
       });
     setMilestoneDates(nextDates);
-    const calculated = calculateScheduleDates(
-      activity.scheduleItems,
-      projectDetail?.projectAnchorDate || undefined
-    );
+    const calculated = calculateScheduleDates(activity.scheduleItems);
     setPreviewItems(calculated);
-  }, [activity, projectDetail?.projectAnchorDate]);
+  }, [activity]);
 
   async function saveMilestoneDates(): Promise<boolean> {
     if (!activity) {
@@ -258,10 +241,7 @@ export function ProjectConfigureDates() {
       const fixedDate = milestoneDates[item.id] || '';
       return { ...item, fixedDate: fixedDate === '' ? null : fixedDate };
     });
-    const calculated = calculateScheduleDates(
-      updatedItems,
-      projectDetail?.projectAnchorDate || undefined
-    );
+    const calculated = calculateScheduleDates(updatedItems);
     setPreviewItems(calculated);
   }
 

@@ -33,7 +33,6 @@ export function ProjectsList() {
     name: '',
     version: '',
     defaultAnchorRule: '',
-    projectAnchorDate: '',
   });
 
   useEffect(() => {
@@ -50,7 +49,7 @@ export function ProjectsList() {
   }
 
   function openCreateDialog() {
-    setFormData({ name: '', version: '', defaultAnchorRule: '', projectAnchorDate: '' });
+    setFormData({ name: '', version: '', defaultAnchorRule: '' });
     setDialogOpen(true);
   }
 
@@ -217,17 +216,6 @@ export function ProjectsList() {
                   value={formData.version}
                   onChange={(e) => setFormData({ ...formData, version: e.target.value })}
                   placeholder="Auto-generated if blank (e.g., 2026-01-13)"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="projectAnchorDate">Project Anchor Date</Label>
-                <Input
-                  id="projectAnchorDate"
-                  type="date"
-                  value={formData.projectAnchorDate}
-                  onChange={(e) =>
-                    setFormData({ ...formData, projectAnchorDate: e.target.value })
-                  }
                 />
               </div>
             </div>

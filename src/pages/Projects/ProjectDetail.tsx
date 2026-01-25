@@ -191,11 +191,6 @@ export default function ProjectDetailPage() {
             </div>
             <p className="text-muted-foreground mt-1">
               {projectDetail.activities.length} {projectDetail.activities.length === 1 ? 'activity' : 'activities'}
-              {projectDetail.projectAnchorDate && (
-                <span className="ml-2">
-                  | Anchor Date: {projectDetail.projectAnchorDate}
-                </span>
-              )}
             </p>
           </div>
           <div className="flex gap-2">
@@ -290,7 +285,6 @@ export default function ProjectDetailPage() {
                       <TableRow>
                         <TableHead>Supplier</TableHead>
                         <TableHead>NMR Rank</TableHead>
-                        <TableHead>Supplier Anchor Date</TableHead>
                         <TableHead>Created</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
@@ -302,7 +296,6 @@ export default function ProjectDetailPage() {
                           <TableCell>
                             <RankBadge rank={sp.supplierProjectNmrRank ?? null} />
                           </TableCell>
-                          <TableCell>{sp.supplierAnchorDate || '-'}</TableCell>
                           <TableCell className="text-muted-foreground">{formatDate(sp.createdAt)}</TableCell>
                           <TableCell className="text-right">
                             <Button

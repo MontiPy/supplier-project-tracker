@@ -1,12 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   Supplier,
+  SupplierLocationCode,
   ActivityTemplate,
   Project,
   ProjectActivity,
   ProjectScheduleItem,
   CreateSupplierParams,
   UpdateSupplierParams,
+  CreateSupplierLocationCodeParams,
   CreateActivityTemplateParams,
   UpdateActivityTemplateParams,
   CreateProjectParams,
@@ -84,6 +86,16 @@ contextBridge.exposeInMainWorld('sqts', {
     update: (params: UpdateSupplierParams): Promise<APIResponse<Supplier>> =>
       ipcRenderer.invoke('suppliers:update', params),
     delete: (id: number): Promise<APIResponse<void>> => ipcRenderer.invoke('suppliers:delete', id),
+  },
+  supplierLocationCodes: {
+    list: (supplierId: number): Promise<APIResponse<SupplierLocationCode[]>> =>
+      ipcRenderer.invoke('supplier-location-codes:list', supplierId),
+    create: (
+      params: CreateSupplierLocationCodeParams
+    ): Promise<APIResponse<SupplierLocationCode>> =>
+      ipcRenderer.invoke('supplier-location-codes:create', params),
+    delete: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('supplier-location-codes:delete', id),
   },
 
   // Activity Templates API
@@ -293,6 +305,11 @@ export interface SQTSAPI {
     get: (id: number) => Promise<APIResponse<Supplier>>;
     create: (params: CreateSupplierParams) => Promise<APIResponse<Supplier>>;
     update: (params: UpdateSupplierParams) => Promise<APIResponse<Supplier>>;
+    delete: (id: number) => Promise<APIResponse<void>>;
+  };
+  supplierLocationCodes: {
+    list: (supplierId: number) => Promise<APIResponse<SupplierLocationCode[]>>;
+    create: (params: CreateSupplierLocationCodeParams) => Promise<APIResponse<SupplierLocationCode>>;
     delete: (id: number) => Promise<APIResponse<void>>;
   };
   activityTemplates: {

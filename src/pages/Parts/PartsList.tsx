@@ -141,10 +141,6 @@ export function PartsList() {
     }
   }
 
-  const selectedSupplierProject = supplierProjects.find(
-    (supplierProject) => supplierProject.id === selectedSupplierProjectId
-  );
-
   return (
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
@@ -187,13 +183,6 @@ export function PartsList() {
               ))}
             </select>
           </div>
-
-          {selectedSupplierProject && (
-            <div className="text-sm text-muted-foreground">
-              Project anchor: {selectedSupplierProject.projectAnchorDate || '-'} | Supplier anchor:{' '}
-              {selectedSupplierProject.supplierAnchorDate || '-'}
-            </div>
-          )}
 
           {parts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">

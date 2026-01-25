@@ -9,6 +9,9 @@ const navigation = [
   { name: 'Activity Library', href: '/activity-library', icon: Library },
   { name: 'Parts', href: '/parts', icon: Package },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
+];
+
+const secondaryNavigation = [
   { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Help', href: '/help', icon: HelpCircle },
 ];
@@ -31,6 +34,26 @@ export function Sidebar() {
       </div>
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navigation.map((item) => {
+          const active = isActive(item.href);
+          return (
+            <Link
+              key={item.name}
+              to={item.href}
+              className={cn(
+                'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                active
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              )}
+            >
+              <item.icon className="h-5 w-5" />
+              {item.name}
+            </Link>
+          );
+        })}
+      </nav>
+      <nav className="space-y-1 border-t px-3 py-4">
+        {secondaryNavigation.map((item) => {
           const active = isActive(item.href);
           return (
             <Link

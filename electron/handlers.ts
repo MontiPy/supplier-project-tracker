@@ -15,12 +15,14 @@ import { calculateScheduleDates, validateScheduleItems } from './scheduler.js';
 import { previewPropagation, propagateChanges } from './engine/propagation.js';
 import type {
   Supplier,
+  SupplierLocationCode,
   ActivityTemplate,
   Project,
   ProjectActivity,
   ProjectScheduleItem,
   CreateSupplierParams,
   UpdateSupplierParams,
+  CreateSupplierLocationCodeParams,
   CreateActivityTemplateParams,
   UpdateActivityTemplateParams,
   CreateProjectParams,
@@ -98,17 +100,6 @@ function formatVersionDate(value: Date): string {
   const month = String(value.getMonth() + 1).padStart(2, '0');
   const day = String(value.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-function getProjectAnchorDateForActivity(projectActivityId: number): string | null {
-  const result = queryOne<{ project_anchor_date: string | null }>(
-    `SELECT p.project_anchor_date
-     FROM projects p
-     JOIN project_activities pa ON pa.project_id = p.id
-     WHERE pa.id = ?`,
-    [projectActivityId]
-  );
-  return result?.project_anchor_date ?? null;
 }
 
 function getUseBusinessDaysSetting(): boolean {
@@ -327,9 +318,8 @@ function shouldIncludeActivity(activityTemplateId: number, context: Applicabilit
 
 function evaluateApplicabilityForSupplierProject(supplierProjectId: number): void {
   const supplierProject = queryOne(
-    `SELECT sp.*, p.project_anchor_date
+    `SELECT sp.*
      FROM supplier_projects sp
-     JOIN projects p ON sp.project_id = p.id
      WHERE sp.id = ?`,
     [supplierProjectId]
   );
@@ -385,9 +375,7 @@ function evaluateApplicabilityForSupplierProject(supplierProjectId: number): voi
         );
         ensureSupplierScheduleItemsForActivity(
           insertResult.lastInsertRowid,
-          activity.id,
-          supplierProject.project_anchor_date,
-          supplierProject.supplier_anchor_date
+          activity.id
         );
       } else {
         if (instance.status === 'Not Required') {
@@ -398,9 +386,7 @@ function evaluateApplicabilityForSupplierProject(supplierProjectId: number): voi
         }
         ensureSupplierScheduleItemsForActivity(
           instance.id,
-          activity.id,
-          supplierProject.project_anchor_date,
-          supplierProject.supplier_anchor_date
+          activity.id
         );
       }
     } else {
@@ -436,9 +422,7 @@ function reapplyApplicabilityForTemplate(activityTemplateId: number): void {
 
 function ensureSupplierScheduleItemsForActivity(
   supplierActivityInstanceId: number,
-  projectActivityId: number,
-  projectAnchorDate: string | null,
-  supplierAnchorDate: string | null
+  projectActivityId: number
 ): void {
   const projectItemsRaw = query<ProjectScheduleItem>(
     'SELECT * FROM project_schedule_items WHERE project_activity_id = ? ORDER BY sort_order',
@@ -468,8 +452,6 @@ function ensureSupplierScheduleItemsForActivity(
   const useBusinessDays = getUseBusinessDaysSetting();
   const itemsWithDates = calculateScheduleDates(
     toCamelCase<ProjectScheduleItem[]>(projectItemsRaw),
-    projectAnchorDate || undefined,
-    supplierAnchorDate || undefined,
     useBusinessDays,
     actualDates
   );
@@ -488,15 +470,9 @@ function ensureSupplierScheduleItemsForActivity(
 function recalculateCompletionAnchorsForActivity(supplierActivityInstanceId: number): void {
   const context = queryOne<{
     project_activity_id: number;
-    project_anchor_date: string | null;
-    supplier_anchor_date: string | null;
   }>(
     `SELECT sai.project_activity_id,
-            p.project_anchor_date,
-            sp.supplier_anchor_date
      FROM supplier_activity_instances sai
-     JOIN supplier_projects sp ON sai.supplier_project_id = sp.id
-     JOIN projects p ON sp.project_id = p.id
      WHERE sai.id = ?`,
     [supplierActivityInstanceId]
   );
@@ -537,8 +513,6 @@ function recalculateCompletionAnchorsForActivity(supplierActivityInstanceId: num
   const useBusinessDays = getUseBusinessDaysSetting();
   const recalculated = calculateScheduleDates(
     projectItems,
-    context.project_anchor_date || undefined,
-    context.supplier_anchor_date || undefined,
     useBusinessDays,
     actualDates
   );
@@ -701,6 +675,79 @@ function handleSuppliersDelete(_event: any, id: number): APIResponse<void> {
     return createSuccessResponse(undefined);
   } catch (error) {
     console.error('Error deleting supplier:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Supplier Location Codes Handlers
+// ============================================================================
+
+function isNumericSegment(value: string): boolean {
+  return /^\d+$/.test(value);
+}
+
+function handleSupplierLocationCodesList(
+  _event: any,
+  supplierId: number
+): APIResponse<SupplierLocationCode[]> {
+  try {
+    const codes = query(
+      `SELECT * FROM supplier_location_codes
+       WHERE supplier_id = ?
+       ORDER BY supplier_number, location_code`,
+      [supplierId]
+    );
+    return createSuccessResponse(toCamelCase<SupplierLocationCode[]>(codes));
+  } catch (error) {
+    console.error('Error listing supplier location codes:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleSupplierLocationCodesCreate(
+  _event: any,
+  params: CreateSupplierLocationCodeParams
+): APIResponse<SupplierLocationCode> {
+  try {
+    const supplierNumber = params.supplierNumber.trim();
+    const locationCode = params.locationCode.trim();
+
+    if (!supplierNumber || !locationCode) {
+      return createErrorResponse('Supplier number and location code are required');
+    }
+    if (!isNumericSegment(supplierNumber) || !isNumericSegment(locationCode)) {
+      return createErrorResponse('Supplier number and location code must be numeric');
+    }
+
+    const result = run(
+      `INSERT INTO supplier_location_codes
+       (supplier_id, supplier_number, location_code)
+       VALUES (?, ?, ?)`,
+      [params.supplierId, supplierNumber, locationCode]
+    );
+
+    const code = queryOne(
+      'SELECT * FROM supplier_location_codes WHERE id = ?',
+      [result.lastInsertRowid]
+    );
+
+    return createSuccessResponse(toCamelCase<SupplierLocationCode>(code));
+  } catch (error) {
+    if (String(error).includes('UNIQUE constraint failed')) {
+      return createErrorResponse('Supplier number/location code already exists');
+    }
+    console.error('Error creating supplier location code:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleSupplierLocationCodesDelete(_event: any, id: number): APIResponse<void> {
+  try {
+    run('DELETE FROM supplier_location_codes WHERE id = ?', [id]);
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting supplier location code:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -1165,14 +1212,14 @@ function handleProjectsGet(_event: any, id: number): APIResponse<Project> {
 
 function handleProjectsCreate(_event: any, params: CreateProjectParams): APIResponse<Project> {
   try {
-    const { name, version, defaultAnchorRule, projectAnchorDate } = params;
+    const { name, version, defaultAnchorRule } = params;
     const finalVersion =
       version && version.trim() !== '' ? version.trim() : formatVersionDate(new Date());
 
     const result = run(
-      `INSERT INTO projects (name, version, default_anchor_rule, project_anchor_date, updated_at)
-       VALUES (?, ?, ?, ?, datetime('now'))`,
-      [name, finalVersion, defaultAnchorRule || null, projectAnchorDate || null]
+      `INSERT INTO projects (name, version, default_anchor_rule, updated_at)
+       VALUES (?, ?, ?, datetime('now'))`,
+      [name, finalVersion, defaultAnchorRule || null]
     );
 
     const project = queryOne('SELECT * FROM projects WHERE id = ?', [result.lastInsertRowid]);
@@ -1186,7 +1233,7 @@ function handleProjectsCreate(_event: any, params: CreateProjectParams): APIResp
 
 function handleProjectsUpdate(_event: any, params: UpdateProjectParams): APIResponse<Project> {
   try {
-    const { id, name, version, defaultAnchorRule, projectAnchorDate } = params;
+    const { id, name, version, defaultAnchorRule } = params;
 
     const updates: string[] = [];
     const values: any[] = [];
@@ -1203,11 +1250,6 @@ function handleProjectsUpdate(_event: any, params: UpdateProjectParams): APIResp
       updates.push('default_anchor_rule = ?');
       values.push(defaultAnchorRule);
     }
-    if (projectAnchorDate !== undefined) {
-      updates.push('project_anchor_date = ?');
-      values.push(projectAnchorDate);
-    }
-
     if (updates.length === 0) {
       return createErrorResponse('No fields to update');
     }
@@ -1277,12 +1319,9 @@ function handleProjectActivitiesGet(_event: any, id: number): APIResponse<Projec
     );
 
     // Calculate dates
-    const projectAnchorDate = getProjectAnchorDateForActivity(id);
     const useBusinessDays = getUseBusinessDaysSetting();
     const itemsWithDates = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-      projectAnchorDate || undefined,
-      undefined, // supplierAnchorDate
       useBusinessDays
     );
 
@@ -1557,20 +1596,16 @@ function handleProjectActivitiesSyncFromTemplate(
     }
 
     const supplierActivities = query(
-      `SELECT sai.id as supplier_activity_instance_id, sp.supplier_anchor_date
+      `SELECT sai.id as supplier_activity_instance_id
        FROM supplier_activity_instances sai
-       JOIN supplier_projects sp ON sp.id = sai.supplier_project_id
        WHERE sai.project_activity_id = ?`,
       [projectActivityId]
     );
-    const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
 
     for (const supplierActivity of supplierActivities) {
       ensureSupplierScheduleItemsForActivity(
         supplierActivity.supplier_activity_instance_id,
-        projectActivityId,
-        projectAnchorDate,
-        supplierActivity.supplier_anchor_date || null
+        projectActivityId
       );
     }
 
@@ -1596,12 +1631,9 @@ function handleScheduleItemsList(
       [projectActivityId]
     );
 
-    const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
     const useBusinessDays = getUseBusinessDaysSetting();
     const itemsWithDates = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(items),
-      projectAnchorDate || undefined,
-      undefined, // supplierAnchorDate
       useBusinessDays
     );
 
@@ -1696,20 +1728,16 @@ function handleScheduleItemsCreate(
     }
 
     const supplierActivities = query(
-      `SELECT sai.id as supplier_activity_instance_id, sp.supplier_anchor_date
+      `SELECT sai.id as supplier_activity_instance_id
        FROM supplier_activity_instances sai
-       JOIN supplier_projects sp ON sp.id = sai.supplier_project_id
        WHERE sai.project_activity_id = ?`,
       [projectActivityId]
     );
     if (supplierActivities.length > 0) {
-      const projectAnchorDate = getProjectAnchorDateForActivity(projectActivityId);
       for (const supplierActivity of supplierActivities) {
         ensureSupplierScheduleItemsForActivity(
           supplierActivity.supplier_activity_instance_id,
-          projectActivityId,
-          projectAnchorDate,
-          supplierActivity.supplier_anchor_date || null
+          projectActivityId
         );
       }
     }
@@ -1839,7 +1867,7 @@ function handleScheduleItemsDelete(_event: any, id: number): APIResponse<void> {
 function handleSupplierProjectsList(): APIResponse<SupplierProjectSummary[]> {
   try {
     const supplierProjects = query(
-      `SELECT sp.*, s.name as supplier_name, p.name as project_name, p.project_anchor_date
+      `SELECT sp.*, s.name as supplier_name, p.name as project_name
        FROM supplier_projects sp
        JOIN suppliers s ON sp.supplier_id = s.id
        JOIN projects p ON sp.project_id = p.id
@@ -1858,7 +1886,7 @@ function handleSupplierProjectsListBySupplier(
 ): APIResponse<SupplierProjectSummary[]> {
   try {
     const supplierProjects = query(
-      `SELECT sp.*, s.name as supplier_name, p.name as project_name, p.project_anchor_date
+      `SELECT sp.*, s.name as supplier_name, p.name as project_name
        FROM supplier_projects sp
        JOIN suppliers s ON sp.supplier_id = s.id
        JOIN projects p ON sp.project_id = p.id
@@ -1879,7 +1907,7 @@ function handleSupplierProjectsGetDetail(
 ): APIResponse<SupplierProjectDetail> {
   try {
     const supplierProject = queryOne(
-      `SELECT sp.*, s.name as supplier_name, p.name as project_name, p.project_anchor_date
+      `SELECT sp.*, s.name as supplier_name, p.name as project_name
        FROM supplier_projects sp
        JOIN suppliers s ON sp.supplier_id = s.id
        JOIN projects p ON sp.project_id = p.id
@@ -1890,9 +1918,6 @@ function handleSupplierProjectsGetDetail(
     if (!supplierProject) {
       return createErrorResponse(`Supplier project not found: ${id}`);
     }
-
-    const projectAnchorDate = supplierProject.project_anchor_date || null;
-    const supplierAnchorDate = supplierProject.supplier_anchor_date || null;
 
     const activities = query(
       `SELECT sai.*, at.name as activity_template_name
@@ -1907,9 +1932,7 @@ function handleSupplierProjectsGetDetail(
     const activitiesWithDetails: SupplierProjectActivityDetail[] = activities.map((activity: any) => {
       ensureSupplierScheduleItemsForActivity(
         activity.id,
-        activity.project_activity_id,
-        projectAnchorDate,
-        supplierAnchorDate
+        activity.project_activity_id
       );
       const scheduleItems = query(
         `SELECT psi.*, ssi.id as supplier_schedule_item_id,
@@ -1940,7 +1963,6 @@ function handleSupplierProjectsGetDetail(
       ...toCamelCase<SupplierProject>(supplierProject),
       supplierName: supplierProject.supplier_name,
       projectName: supplierProject.project_name,
-      projectAnchorDate: supplierProject.project_anchor_date,
       activities: activitiesWithDetails,
     };
 
@@ -1956,7 +1978,7 @@ function handleSupplierProjectsApply(
   params: ApplySupplierProjectParams
 ): APIResponse<SupplierProject> {
   try {
-    const { supplierId, projectId, supplierAnchorDate, supplierProjectNmrRank } = params;
+    const { supplierId, projectId, supplierProjectNmrRank } = params;
 
     const supplier = queryOne('SELECT * FROM suppliers WHERE id = ?', [supplierId]);
     if (!supplier) {
@@ -1984,9 +2006,9 @@ function handleSupplierProjectsApply(
 
     const insertResult = run(
       `INSERT INTO supplier_projects
-       (supplier_id, project_id, project_version, supplier_anchor_date, supplier_project_nmr_rank)
-       VALUES (?, ?, ?, ?, ?)`,
-      [supplierId, projectId, project.version, supplierAnchorDate || null, normalizedNmrRank]
+       (supplier_id, project_id, project_version, supplier_project_nmr_rank)
+       VALUES (?, ?, ?, ?)`,
+      [supplierId, projectId, project.version, normalizedNmrRank]
     );
 
     const supplierProjectId =
@@ -2036,8 +2058,6 @@ function handleSupplierProjectsApply(
       const useBusinessDays = getUseBusinessDaysSetting();
       const itemsWithDates = calculateScheduleDates(
         toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-        project.project_anchor_date || undefined,
-        supplierAnchorDate || undefined,
         useBusinessDays
       );
 
@@ -2067,15 +2087,11 @@ function handleSupplierProjectsUpdate(
   params: UpdateSupplierProjectParams
 ): APIResponse<SupplierProject> {
   try {
-    const { id, supplierAnchorDate, supplierProjectNmrRank } = params;
+    const { id, supplierProjectNmrRank } = params;
 
     const updates: string[] = [];
     const values: any[] = [];
 
-    if (supplierAnchorDate !== undefined) {
-      updates.push('supplier_anchor_date = ?');
-      values.push(supplierAnchorDate);
-    }
     if (supplierProjectNmrRank !== undefined) {
       const normalizedNmrRank =
         supplierProjectNmrRank && supplierProjectNmrRank.trim() !== ''
@@ -2503,7 +2519,6 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
     );
 
     // For each activity, get schedule items with computed dates
-    const projectAnchorDate = project.project_anchor_date ?? null;
     const useBusinessDays = getUseBusinessDaysSetting();
     const activitiesWithDetails: ProjectActivityDetail[] = activities.map((activity: any) => {
       const scheduleItems = query<ProjectScheduleItem>(
@@ -2513,8 +2528,6 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 
       const itemsWithDates = calculateScheduleDates(
         toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-        projectAnchorDate,
-        undefined, // supplierAnchorDate
         useBusinessDays
       );
 
@@ -3207,7 +3220,6 @@ function handleSupplierProjectsListBySupplierWithProgress(
         sp.*,
         s.name as supplier_name,
         p.name as project_name,
-        p.project_anchor_date,
         at.name as activity_name,
         COUNT(ssi.id) as total_items,
         SUM(CASE WHEN ssi.status = 'Complete' THEN 1 ELSE 0 END) as completed_items,
@@ -3244,11 +3256,9 @@ function handleSupplierProjectsListBySupplierWithProgress(
           ...sp,
           supplier_name: sp.supplier_name,
           project_name: sp.project_name,
-          project_anchor_date: sp.project_anchor_date,
         }),
         supplierName: sp.supplier_name,
         projectName: sp.project_name,
-        projectAnchorDate: sp.project_anchor_date,
         activityName: sp.activity_name || null,
         totalItems,
         completedItems,
@@ -3337,6 +3347,9 @@ export function registerHandlers(): void {
   ipcMain.handle('suppliers:create', handleSuppliersCreate);
   ipcMain.handle('suppliers:update', handleSuppliersUpdate);
   ipcMain.handle('suppliers:delete', handleSuppliersDelete);
+  ipcMain.handle('supplier-location-codes:list', handleSupplierLocationCodesList);
+  ipcMain.handle('supplier-location-codes:create', handleSupplierLocationCodesCreate);
+  ipcMain.handle('supplier-location-codes:delete', handleSupplierLocationCodesDelete);
 
   // Activity Templates
   ipcMain.handle('activity-templates:list', handleActivityTemplatesList);
