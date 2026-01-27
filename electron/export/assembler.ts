@@ -87,11 +87,17 @@ function exportActivityTemplates(ids: number[]): ExportedActivityTemplate[] {
         anchorRef = anchorItem?.name || null;
       }
 
+      // For relative anchors, ensure offsetDays is a number (default to 0 if null)
+      const anchorType = item.anchor_type as AnchorType;
+      const offsetDays = (anchorType === 'SCHEDULE_ITEM' || anchorType === 'COMPLETION')
+        ? (item.offset_days ?? 0)
+        : item.offset_days;
+
       return {
         name: item.name,
         kind: item.kind as ScheduleItemKind,
-        anchorType: item.anchor_type as AnchorType,
-        offsetDays: item.offset_days,
+        anchorType,
+        offsetDays,
         anchorRef,
       };
     });
@@ -169,11 +175,17 @@ function exportProjects(ids: number[]): ExportedProject[] {
           anchorRef = anchorItem?.name || null;
         }
 
+        // For relative anchors, ensure offsetDays is a number (default to 0 if null)
+        const anchorType = item.anchor_type as AnchorType;
+        const offsetDays = (anchorType === 'SCHEDULE_ITEM' || anchorType === 'COMPLETION')
+          ? (item.offset_days ?? 0)
+          : item.offset_days;
+
         return {
           name: item.name,
           kind: item.kind as ScheduleItemKind,
-          anchorType: item.anchor_type as AnchorType,
-          offsetDays: item.offset_days,
+          anchorType,
+          offsetDays,
           anchorRef,
           fixedDate: item.fixed_date,
           sortOrder: item.sort_order,
