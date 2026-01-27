@@ -212,7 +212,8 @@ export interface SupplierProjectDetail extends SupplierProject {
 
 export interface Part {
   id: number;
-  supplierProjectId: number;
+  supplierProjectId: number; // Kept for backward compatibility
+  supplierLocationCodeId: number;
   partNumber: string;
   description: string | null;
   paRank: string | null;
@@ -409,7 +410,8 @@ export interface CreateSupplierActivityAttachmentParams {
 
 // Parts operations
 export interface CreatePartParams {
-  supplierProjectId: number;
+  supplierProjectId: number; // Kept for backward compatibility - will be used to derive location code
+  supplierLocationCodeId?: number; // Optional - will use DEFAULT location code if not provided
   partNumber: string;
   description?: string;
   paRank?: string;
@@ -632,4 +634,165 @@ export interface SupplierProjectWithProgress extends SupplierProjectSummary {
   nextDue: string | null;
   nextDueDate: string | null; // alias for nextDue
   status: 'On Track' | 'At Risk' | 'Behind';
+}
+
+// ============================================================================
+// Import/Export Types
+// ============================================================================
+
+export type ExportScope = 'full' | 'selective';
+
+export interface ExportMetadata {
+  version: string;
+  exportedAt: string;
+  source: string;
+  scope: ExportScope;
+}
+
+export interface ExportedScheduleItem {
+  name: string;
+  kind: ScheduleItemKind;
+  anchorType: AnchorType;
+  offsetDays: number | null;
+  anchorRef: string | null; // Name of anchor schedule item
+  fixedDate?: string | null;
+  sortOrder?: number;
+  overrideDate?: string | null;
+  overrideEnabled?: boolean;
+}
+
+export interface ExportedActivityTemplate {
+  name: string;
+  description: string | null;
+  category: string | null;
+  scheduleItems: ExportedScheduleItem[];
+  applicabilityRules: {
+    operator: ApplicabilityOperator;
+    enabled: boolean;
+    clauses: Array<{
+      subjectType: ApplicabilitySubject;
+      comparator: ApplicabilityComparator;
+      value: string;
+    }>;
+  } | null;
+}
+
+export interface ExportedProjectActivity {
+  activityTemplateName: string;
+  sortOrder: number;
+  scheduleItems: ExportedScheduleItem[];
+  dependencies: string[]; // Array of activity template names
+}
+
+export interface ExportedProject {
+  name: string;
+  version: string;
+  activities: ExportedProjectActivity[];
+}
+
+export interface ExportedSupplierScheduleItemInstance {
+  name: string;
+  plannedDate: string | null;
+  actualDate: string | null;
+  status: ActivityStatus;
+  plannedDateOverride: boolean;
+  scopeOverride: ScopeOverride;
+  locked: boolean;
+}
+
+export interface ExportedSupplierActivityInstance {
+  activityTemplateName: string;
+  status: ActivityStatus;
+  scopeOverride: ScopeOverride;
+  scheduleItems: ExportedSupplierScheduleItemInstance[];
+  attachments: Array<{
+    label: string | null;
+    url: string;
+  }>;
+}
+
+export interface ExportedPart {
+  supplierNumber: string;
+  locationCode: string;
+  partNumber: string;
+  description: string | null;
+  paRank: string | null;
+  notes: string | null;
+}
+
+export interface ExportedSupplierProject {
+  projectName: string;
+  projectVersion: string;
+  nmrRank: string | null;
+  activities: ExportedSupplierActivityInstance[];
+  parts: ExportedPart[];
+}
+
+export interface ExportedSupplierLocationCode {
+  supplierNumber: string;
+  locationCode: string;
+}
+
+export interface ExportedSupplier {
+  name: string;
+  notes: string | null;
+  locationCodes: ExportedSupplierLocationCode[];
+  projects: ExportedSupplierProject[];
+}
+
+export interface ExportedSettings {
+  nmrRanks: string[];
+  paRanks: string[];
+  propagationSkipComplete: boolean;
+  propagationSkipLocked: boolean;
+  propagationSkipOverridden: boolean;
+  dateFormat: string;
+  useBusinessDays: boolean;
+}
+
+export interface ExportedData {
+  exportMetadata: ExportMetadata;
+  activityTemplates?: ExportedActivityTemplate[];
+  projects?: ExportedProject[];
+  suppliers?: ExportedSupplier[];
+  settings?: ExportedSettings;
+}
+
+export type MatchStatus = 'NEW' | 'UNCHANGED' | 'MODIFIED' | 'CONFLICT';
+
+export interface MatchResult {
+  matchKey: string;
+  status: MatchStatus;
+  entityType: string;
+  existingId?: number;
+  incomingData: any;
+  existingData?: any;
+  changes?: Array<{
+    field: string;
+    oldValue: any;
+    newValue: any;
+  }>;
+  errors?: string[];
+}
+
+export interface ImportAnalysis {
+  summary: {
+    [entityType: string]: {
+      new: number;
+      modified: number;
+      unchanged: number;
+      errors: number;
+    };
+  };
+  matches: MatchResult[];
+}
+
+export interface ExportOptions {
+  scope: ExportScope;
+  activityTemplateIds?: number[];
+  projectIds?: number[];
+  supplierIds?: number[];
+  includeScheduleInstances: boolean;
+  includeAttachments: boolean;
+  includeSettings: boolean;
 }

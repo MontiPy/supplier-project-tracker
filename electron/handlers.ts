@@ -2410,11 +2410,42 @@ function handlePartsList(_event: any, supplierProjectId: number): APIResponse<Pa
 function handlePartsCreate(_event: any, params: CreatePartParams): APIResponse<Part> {
   try {
     const { supplierProjectId, partNumber, description, paRank, notes } = params;
+    let { supplierLocationCodeId } = params;
+
+    // If no location code provided, find or create default location code for this supplier project
+    if (!supplierLocationCodeId) {
+      const supplierProject = queryOne<{ supplier_id: number }>(
+        'SELECT supplier_id FROM supplier_projects WHERE id = ?',
+        [supplierProjectId]
+      );
+
+      if (!supplierProject) {
+        return createErrorResponse(`Supplier project not found: ${supplierProjectId}`);
+      }
+
+      // Find or create default location code
+      let locationCode = queryOne<{ id: number }>(
+        `SELECT id FROM supplier_location_codes
+         WHERE supplier_id = ? AND supplier_number = 'DEFAULT' AND location_code = 'DEFAULT'`,
+        [supplierProject.supplier_id]
+      );
+
+      if (!locationCode) {
+        const insertResult = run(
+          `INSERT INTO supplier_location_codes (supplier_id, supplier_number, location_code)
+           VALUES (?, 'DEFAULT', 'DEFAULT')`,
+          [supplierProject.supplier_id]
+        );
+        supplierLocationCodeId = insertResult.lastInsertRowid as number;
+      } else {
+        supplierLocationCodeId = locationCode.id;
+      }
+    }
 
     const result = run(
-      `INSERT INTO parts (supplier_project_id, part_number, description, pa_rank, notes)
-       VALUES (?, ?, ?, ?, ?)`,
-      [supplierProjectId, partNumber, description || null, paRank || null, notes || null]
+      `INSERT INTO parts (supplier_project_id, supplier_location_code_id, part_number, description, pa_rank, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [supplierProjectId, supplierLocationCodeId, partNumber, description || null, paRank || null, notes || null]
     );
 
     const part = queryOne('SELECT * FROM parts WHERE id = ?', [result.lastInsertRowid]);
