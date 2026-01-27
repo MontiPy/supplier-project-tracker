@@ -2581,6 +2581,28 @@ async function handleExportSaveToFile(
   }
 }
 
+async function handleImportSelectFile(): Promise<APIResponse<string | null>> {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: 'Select Import File',
+      filters: [
+        { name: 'JSON Files', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return createSuccessResponse(null);
+    }
+
+    return createSuccessResponse(result.filePaths[0]);
+  } catch (error) {
+    console.error('Error selecting import file:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
 async function handleImportParseFile(_event: any, filePath: string): Promise<APIResponse<any>> {
   try {
     const fileContent = fs.readFileSync(filePath, 'utf-8');
@@ -3596,6 +3618,7 @@ export function registerHandlers(): void {
   ipcMain.handle('export:generate-json', handleExportGenerateJson);
   ipcMain.handle('export:save-to-file', handleExportSaveToFile);
   ipcMain.handle('export:full-database', handleExportFullDatabase);
+  ipcMain.handle('import:select-file', handleImportSelectFile);
   ipcMain.handle('import:parse-file', handleImportParseFile);
   ipcMain.handle('import:analyze', handleImportAnalyze);
 

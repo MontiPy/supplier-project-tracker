@@ -265,6 +265,8 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('export:full-database'),
   },
   importData: {
+    selectFile: (): Promise<APIResponse<string | null>> =>
+      ipcRenderer.invoke('import:select-file'),
     parseFile: (filePath: string): Promise<APIResponse<any>> =>
       ipcRenderer.invoke('import:parse-file', filePath),
     analyze: (data: ExportedData): Promise<APIResponse<ImportAnalysis>> =>
@@ -429,6 +431,7 @@ export interface SQTSAPI {
     fullDatabase: () => Promise<APIResponse<string>>;
   };
   importData: {
+    selectFile: () => Promise<APIResponse<string | null>>;
     parseFile: (filePath: string) => Promise<APIResponse<any>>;
     analyze: (data: ExportedData) => Promise<APIResponse<ImportAnalysis>>;
   };
