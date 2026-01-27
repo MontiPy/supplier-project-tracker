@@ -2528,6 +2528,119 @@ function handlePartsDelete(_event: any, id: number): APIResponse<void> {
 }
 
 // ============================================================================
+// Import/Export Handlers
+// ============================================================================
+
+import { assembleExport, exportFullDatabase } from './export/assembler.js';
+import { parseImportFile } from './import/parser.js';
+import { analyzeImport } from './import/analyzer.js';
+import type { ExportOptions, ExportedData, ImportAnalysis } from '@shared/types';
+
+function handleExportGenerateJson(
+  _event: any,
+  options: ExportOptions
+): APIResponse<ExportedData> {
+  try {
+    const exportData = assembleExport(options);
+    return createSuccessResponse(exportData);
+  } catch (error) {
+    console.error('Error generating export:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+async function handleExportSaveToFile(
+  _event: any,
+  options: ExportOptions
+): Promise<APIResponse<string>> {
+  try {
+    const exportData = assembleExport(options);
+    const jsonString = JSON.stringify(exportData, null, 2);
+
+    // Open save dialog
+    const result = await dialog.showSaveDialog({
+      title: 'Export Data',
+      defaultPath: `sqts-export-${new Date().toISOString().split('T')[0]}.json`,
+      filters: [
+        { name: 'JSON Files', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return createErrorResponse('Export cancelled');
+    }
+
+    // Write file
+    fs.writeFileSync(result.filePath, jsonString, 'utf-8');
+
+    return createSuccessResponse(result.filePath);
+  } catch (error) {
+    console.error('Error saving export:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+async function handleImportParseFile(_event: any, filePath: string): Promise<APIResponse<any>> {
+  try {
+    const fileContent = fs.readFileSync(filePath, 'utf-8');
+    const parseResult = parseImportFile(fileContent);
+
+    if (!parseResult.success) {
+      const errorMsg = parseResult.errors.map(e => `${e.path}: ${e.message}`).join('; ');
+      return createErrorResponse(`Validation failed: ${errorMsg}`);
+    }
+
+    return createSuccessResponse({
+      data: parseResult.data,
+      errors: parseResult.errors,
+    });
+  } catch (error) {
+    console.error('Error parsing import file:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleImportAnalyze(_event: any, data: ExportedData): APIResponse<ImportAnalysis> {
+  try {
+    const analysis = analyzeImport(data);
+    return createSuccessResponse(analysis);
+  } catch (error) {
+    console.error('Error analyzing import:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+async function handleExportFullDatabase(): Promise<APIResponse<string>> {
+  try {
+    const exportData = exportFullDatabase();
+    const jsonString = JSON.stringify(exportData, null, 2);
+
+    // Open save dialog
+    const result = await dialog.showSaveDialog({
+      title: 'Export Full Database',
+      defaultPath: `sqts-full-export-${new Date().toISOString().split('T')[0]}.json`,
+      filters: [
+        { name: 'JSON Files', extensions: ['json'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return createErrorResponse('Export cancelled');
+    }
+
+    // Write file
+    fs.writeFileSync(result.filePath, jsonString, 'utf-8');
+
+    return createSuccessResponse(result.filePath);
+  } catch (error) {
+    console.error('Error exporting full database:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
 // Projects - Composite Detail Handler
 // ============================================================================
 
@@ -3478,6 +3591,13 @@ export function registerHandlers(): void {
   ipcMain.handle('parts:create', handlePartsCreate);
   ipcMain.handle('parts:update', handlePartsUpdate);
   ipcMain.handle('parts:delete', handlePartsDelete);
+
+  // Import/Export
+  ipcMain.handle('export:generate-json', handleExportGenerateJson);
+  ipcMain.handle('export:save-to-file', handleExportSaveToFile);
+  ipcMain.handle('export:full-database', handleExportFullDatabase);
+  ipcMain.handle('import:parse-file', handleImportParseFile);
+  ipcMain.handle('import:analyze', handleImportAnalyze);
 
   // Phase 4: Propagation + Audit
   ipcMain.handle('projects:preview-propagation', handleProjectsPreviewPropagation);

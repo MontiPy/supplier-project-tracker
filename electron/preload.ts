@@ -63,6 +63,9 @@ import type {
   ProjectWithStats,
   ActivityTemplateWithCounts,
   SupplierProjectWithProgress,
+  ExportOptions,
+  ExportedData,
+  ImportAnalysis,
 } from '../shared/types.js';
 
 // Expose protected methods that allow the renderer process to use
@@ -252,6 +255,22 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('parts:delete', id),
   },
 
+  // Import/Export API
+  exportData: {
+    generateJson: (options: ExportOptions): Promise<APIResponse<ExportedData>> =>
+      ipcRenderer.invoke('export:generate-json', options),
+    saveToFile: (options: ExportOptions): Promise<APIResponse<string>> =>
+      ipcRenderer.invoke('export:save-to-file', options),
+    fullDatabase: (): Promise<APIResponse<string>> =>
+      ipcRenderer.invoke('export:full-database'),
+  },
+  importData: {
+    parseFile: (filePath: string): Promise<APIResponse<any>> =>
+      ipcRenderer.invoke('import:parse-file', filePath),
+    analyze: (data: ExportedData): Promise<APIResponse<ImportAnalysis>> =>
+      ipcRenderer.invoke('import:analyze', data),
+  },
+
   // Audit API (Phase 4)
   audit: {
     list: (params: AuditEventQuery): Promise<APIResponse<AuditEvent[]>> =>
@@ -403,6 +422,15 @@ export interface SQTSAPI {
     create: (params: CreatePartParams) => Promise<APIResponse<Part>>;
     update: (params: UpdatePartParams) => Promise<APIResponse<Part>>;
     delete: (id: number) => Promise<APIResponse<void>>;
+  };
+  exportData: {
+    generateJson: (options: ExportOptions) => Promise<APIResponse<ExportedData>>;
+    saveToFile: (options: ExportOptions) => Promise<APIResponse<string>>;
+    fullDatabase: () => Promise<APIResponse<string>>;
+  };
+  importData: {
+    parseFile: (filePath: string) => Promise<APIResponse<any>>;
+    analyze: (data: ExportedData) => Promise<APIResponse<ImportAnalysis>>;
   };
   audit: {
     list: (params: AuditEventQuery) => Promise<APIResponse<AuditEvent[]>>;
