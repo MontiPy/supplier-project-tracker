@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Upload, FileJson, AlertCircle, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { ExportedData, ImportAnalysis } from '@shared/types';
+import type { ExportedData, ImportAnalysis, MatchResult } from '@shared/types';
+import { ReviewChanges } from './ReviewChanges';
 
 type ImportStep = 'select' | 'analyze' | 'review' | 'confirm' | 'complete';
 
@@ -13,6 +15,7 @@ interface ImportState {
   fileSize: number | null;
   parsedData: ExportedData | null;
   analysis: ImportAnalysis | null;
+  selectedMatches: MatchResult[];
   errors: Array<{ path: string; message: string; severity: 'error' | 'warning' }>;
 }
 
@@ -24,6 +27,7 @@ export function ImportTab() {
     fileSize: null,
     parsedData: null,
     analysis: null,
+    selectedMatches: [],
     errors: [],
   });
 
@@ -126,12 +130,35 @@ export function ImportTab() {
       fileSize: null,
       parsedData: null,
       analysis: null,
+      selectedMatches: [],
       errors: [],
     });
     setError(null);
   }
 
   function handleProceedToReview() {
+    setState({
+      ...state,
+      step: 'review',
+    });
+  }
+
+  function handleProceedToConfirm(selectedMatches: MatchResult[]) {
+    setState({
+      ...state,
+      selectedMatches,
+      step: 'confirm',
+    });
+  }
+
+  function handleBackToAnalysis() {
+    setState({
+      ...state,
+      step: 'analyze',
+    });
+  }
+
+  function handleBackToReview() {
     setState({
       ...state,
       step: 'review',
@@ -317,33 +344,83 @@ export function ImportTab() {
     );
   }
 
-  // Step 3: Review (Placeholder for Phase 4)
-  if (state.step === 'review') {
+  // Step 3: Review Changes
+  if (state.step === 'review' && state.analysis) {
+    return (
+      <ReviewChanges
+        analysis={state.analysis}
+        onBack={handleBackToAnalysis}
+        onProceed={handleProceedToConfirm}
+      />
+    );
+  }
+
+  // Step 4: Confirm
+  if (state.step === 'confirm') {
+    const newCount = state.selectedMatches.filter(m => m.status === 'NEW').length;
+    const modifiedCount = state.selectedMatches.filter(m => m.status === 'MODIFIED').length;
+
     return (
       <div className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>Review Changes</CardTitle>
-            <CardDescription>Change review UI coming in Phase 4</CardDescription>
+            <CardTitle>Confirm Import</CardTitle>
+            <CardDescription>Review the final summary before applying changes</CardDescription>
           </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">
-              Phase 4 will implement:
-            </p>
-            <ul className="list-disc list-inside space-y-2 text-muted-foreground">
-              <li>Detailed change list with filtering and search</li>
-              <li>Inline editing of incoming data</li>
-              <li>Bulk selection and approval actions</li>
-              <li>Conflict resolution options</li>
-              <li>Change preview tooltips</li>
-            </ul>
+          <CardContent className="space-y-4">
+            <div className="border rounded-lg p-4 bg-accent/20">
+              <p className="font-medium mb-3">You are about to apply the following changes:</p>
+              <ul className="space-y-2 text-sm">
+                {newCount > 0 && (
+                  <li className="flex items-center gap-2">
+                    <span className="font-medium text-green-600 dark:text-green-400">{newCount}</span>
+                    <span>new record{newCount !== 1 ? 's' : ''} will be created</span>
+                  </li>
+                )}
+                {modifiedCount > 0 && (
+                  <li className="flex items-center gap-2">
+                    <span className="font-medium text-blue-600 dark:text-blue-400">{modifiedCount}</span>
+                    <span>record{modifiedCount !== 1 ? 's' : ''} will be updated</span>
+                  </li>
+                )}
+              </ul>
+            </div>
+
+            <div className="border border-blue-500 rounded-lg p-4 bg-blue-500/10">
+              <p className="text-sm font-medium mb-2">ℹ Note</p>
+              <p className="text-sm text-muted-foreground">
+                Import application and rollback functionality will be implemented in Phase 5.
+                For now, this confirms your selection is ready to be applied.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="createRollback"
+                  defaultChecked
+                  disabled
+                  className="h-4 w-4 mt-1"
+                />
+                <Label htmlFor="createRollback" className="font-normal cursor-not-allowed opacity-50">
+                  Create rollback point before applying (available in Phase 5)
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground ml-6">
+                Rollback points allow you to undo this entire import if needed
+              </p>
+            </div>
           </CardContent>
         </Card>
 
-        <div className="flex justify-start">
-          <Button variant="outline" onClick={() => setState({ ...state, step: 'analyze' })}>
+        <div className="flex justify-between">
+          <Button variant="outline" onClick={handleBackToReview}>
             <ChevronLeft className="mr-2 h-4 w-4" />
-            Back to Analysis
+            Back to Review
+          </Button>
+          <Button size="lg" disabled>
+            Apply Changes (Phase 5)
           </Button>
         </div>
       </div>
