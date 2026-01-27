@@ -148,20 +148,18 @@ export function compareEntities(_entityType: string, existing: any, incoming: an
   // For now, do a simple field-by-field comparison
   // In the future, we could have entity-specific comparison logic
 
-  const existingKeys = Object.keys(existing).filter((k) => !['id', 'created_at'].includes(k));
+  // Only compare fields that exist in the INCOMING data (not database-only fields)
   const incomingKeys = Object.keys(incoming).filter((k) => !['id', 'created_at'].includes(k));
 
   // Check if any field has changed
-  for (const key of existingKeys) {
-    if (incomingKeys.includes(key)) {
-      const existingValue = existing[key];
-      const incomingValue = incoming[key];
+  for (const key of incomingKeys) {
+    const existingValue = existing[key];
+    const incomingValue = incoming[key];
 
-      // Handle null/undefined equivalence
-      if (existingValue !== incomingValue) {
-        if (!(existingValue == null && incomingValue == null)) {
-          return 'MODIFIED';
-        }
+    // Handle null/undefined equivalence
+    if (existingValue !== incomingValue) {
+      if (!(existingValue == null && incomingValue == null)) {
+        return 'MODIFIED';
       }
     }
   }
@@ -178,12 +176,10 @@ export function getEntityChanges(
 ): Array<{ field: string; oldValue: any; newValue: any }> {
   const changes: Array<{ field: string; oldValue: any; newValue: any }> = [];
 
-  const allKeys = new Set([
-    ...Object.keys(existing).filter((k) => !['id', 'created_at'].includes(k)),
-    ...Object.keys(incoming).filter((k) => !['id', 'created_at'].includes(k)),
-  ]);
+  // Only compare fields that exist in the INCOMING data (ignore database-only fields)
+  const incomingKeys = Object.keys(incoming).filter((k) => !['id', 'created_at'].includes(k));
 
-  for (const key of allKeys) {
+  for (const key of incomingKeys) {
     const existingValue = existing[key];
     const incomingValue = incoming[key];
 
