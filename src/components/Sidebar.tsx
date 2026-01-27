@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Users, FolderKanban, Library, Package, BarChart3, Settings, HelpCircle } from 'lucide-react';
+import { Home, Users, FolderKanban, Library, Package, BarChart3, Settings, HelpCircle, ArrowLeftRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [
@@ -12,6 +12,7 @@ const navigation = [
 ];
 
 const secondaryNavigation = [
+  { name: 'Import / Export', href: '/import-export', icon: ArrowLeftRight },
   { name: 'Settings', href: '/settings', icon: Settings },
   { name: 'Help', href: '/help', icon: HelpCircle },
 ];

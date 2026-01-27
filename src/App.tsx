@@ -12,6 +12,7 @@ import { SupplierProjectDetailPage } from './pages/SupplierProjects/SupplierProj
 import { PartsList } from './pages/Parts/PartsList';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { ReportsPage } from './pages/Reports/ReportsPage';
+import { ImportExportPage } from './pages/ImportExport/ImportExportPage';
 import { Toaster } from './components/ui/toaster';
 
 function App() {
@@ -33,6 +34,7 @@ function App() {
         <Route path="/activity-library" element={<ActivityLibraryPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="/parts" element={<PartsList />} />
+        <Route path="/import-export" element={<ImportExportPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
       </Routes>
