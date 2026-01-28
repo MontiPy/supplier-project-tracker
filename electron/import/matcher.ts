@@ -172,6 +172,20 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
 }
 
 /**
+ * Fields used for natural key matching but not stored as columns in database
+ * These are denormalized reference fields and should not be compared
+ */
+const REFERENCE_FIELDS = new Set([
+  'projectName',
+  'projectVersion',
+  'activityTemplateName',
+  'supplierName',
+  'supplierNumber',
+  'locationCode',
+  'partNumber',
+]);
+
+/**
  * Compare two entities and determine if they're identical or modified
  */
 export function compareEntities(_entityType: string, existing: any, incoming: any): MatchStatus {
@@ -179,8 +193,13 @@ export function compareEntities(_entityType: string, existing: any, incoming: an
   // In the future, we could have entity-specific comparison logic
 
   // Only compare fields that exist in the INCOMING data (not database-only fields)
-  // Exclude 'id' (used for matching), 'created_at' (auto-generated), and nested arrays/objects
-  const incomingKeys = Object.keys(incoming).filter((k) => !['id', 'created_at'].includes(k));
+  // Exclude:
+  // - 'id' (used for matching)
+  // - 'created_at' (auto-generated)
+  // - Reference fields used for natural key matching but not actual DB columns
+  const incomingKeys = Object.keys(incoming).filter(
+    (k) => !['id', 'created_at'].includes(k) && !REFERENCE_FIELDS.has(k)
+  );
 
   // Check if any field has changed
   for (const key of incomingKeys) {
@@ -208,7 +227,10 @@ export function getEntityChanges(
   const changes: Array<{ field: string; oldValue: any; newValue: any }> = [];
 
   // Only compare fields that exist in the INCOMING data (ignore database-only fields)
-  const incomingKeys = Object.keys(incoming).filter((k) => !['id', 'created_at'].includes(k));
+  // Exclude reference fields used for matching but not actual DB columns
+  const incomingKeys = Object.keys(incoming).filter(
+    (k) => !['id', 'created_at'].includes(k) && !REFERENCE_FIELDS.has(k)
+  );
 
   for (const key of incomingKeys) {
     const existingValue = existing[key];
