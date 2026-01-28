@@ -75,7 +75,7 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
     if (data.id !== undefined && data.id !== null) {
       const byId = queryOne(`SELECT * FROM ${getTableName(entityType)} WHERE id = ?`, [data.id]);
       if (byId) {
-        return toCamelCase(byId);
+        return normalizeBooleans(toCamelCase(byId));
       }
     }
 
@@ -188,8 +188,8 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
         break;
     }
 
-    // Convert snake_case database columns to camelCase before returning
-    return result ? toCamelCase(result) : null;
+    // Convert snake_case database columns to camelCase and normalize booleans before returning
+    return result ? normalizeBooleans(toCamelCase(result)) : null;
   } catch (error) {
     console.error(`Error finding existing ${entityType}:`, error);
     return null;
@@ -209,6 +209,33 @@ const REFERENCE_FIELDS = new Set([
   'locationCode',
   'partNumber',
 ]);
+
+/**
+ * Fields that are stored as integers (0/1) in SQLite but should be booleans
+ */
+const BOOLEAN_FIELDS = new Set([
+  'overrideEnabled',
+  'plannedDateOverride',
+  'locked',
+  'enabled',
+]);
+
+/**
+ * Normalize boolean fields from SQLite integers (0/1) to JavaScript booleans
+ */
+function normalizeBooleans(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return obj;
+  }
+
+  const result = { ...obj };
+  for (const key of BOOLEAN_FIELDS) {
+    if (key in result && typeof result[key] === 'number') {
+      result[key] = Boolean(result[key]);
+    }
+  }
+  return result;
+}
 
 /**
  * Compare two entities and determine if they're identical or modified
