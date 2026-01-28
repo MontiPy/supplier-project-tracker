@@ -2,7 +2,7 @@
  * Duplicate detection and matching logic for imports
  */
 
-import { queryOne } from '../database';
+import { queryOne, toCamelCase } from '../database';
 import type { MatchResult, MatchStatus } from '@shared/types';
 
 /**
@@ -75,49 +75,67 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
     if (data.id !== undefined && data.id !== null) {
       const byId = queryOne(`SELECT * FROM ${getTableName(entityType)} WHERE id = ?`, [data.id]);
       if (byId) {
-        return byId;
+        return toCamelCase(byId);
       }
     }
 
     // Fall back to natural key matching (external imports or ID not found)
+    let result: any = null;
     switch (entityType) {
       case 'supplier':
-        return queryOne('SELECT * FROM suppliers WHERE name = ?', [data.name]);
+        result = queryOne('SELECT * FROM suppliers WHERE name = ?', [data.name]);
+        break;
 
       case 'supplier_location_code':
-        return queryOne(
+        result = queryOne(
           `SELECT slc.* FROM supplier_location_codes slc
            JOIN suppliers s ON s.id = slc.supplier_id
            WHERE s.name = ? AND slc.supplier_number = ? AND slc.location_code = ?`,
           [data.supplierName, data.supplierNumber, data.locationCode]
         );
+        break;
 
       case 'activity_template':
-        return queryOne('SELECT * FROM activity_templates WHERE name = ?', [data.name]);
+        result = queryOne('SELECT * FROM activity_templates WHERE name = ?', [data.name]);
+        break;
 
       case 'project':
-        return queryOne('SELECT * FROM projects WHERE name = ? AND version = ?', [data.name, data.version]);
+        result = queryOne('SELECT * FROM projects WHERE name = ? AND version = ?', [data.name, data.version]);
+        break;
 
       case 'project_activity':
-        return queryOne(
+        result = queryOne(
           `SELECT pa.* FROM project_activities pa
            JOIN projects p ON p.id = pa.project_id
            JOIN activity_templates at ON at.id = pa.activity_template_id
            WHERE p.name = ? AND p.version = ? AND at.name = ?`,
           [data.projectName, data.projectVersion, data.activityTemplateName]
         );
+        break;
+
+      case 'project_schedule_item':
+        result = queryOne(
+          `SELECT psi.* FROM project_schedule_items psi
+           JOIN project_activities pa ON pa.id = psi.project_activity_id
+           JOIN projects p ON p.id = pa.project_id
+           JOIN activity_templates at ON at.id = pa.activity_template_id
+           WHERE p.name = ? AND p.version = ? AND at.name = ? AND psi.name = ?`,
+          [data.projectName, data.projectVersion, data.activityTemplateName, data.name]
+        );
+        break;
 
       case 'supplier_project':
-        return queryOne(
+        result = queryOne(
           `SELECT sp.* FROM supplier_projects sp
            JOIN suppliers s ON s.id = sp.supplier_id
            JOIN projects p ON p.id = sp.project_id
            WHERE s.name = ? AND p.name = ? AND p.version = ?`,
           [data.supplierName, data.projectName, data.projectVersion]
         );
+        break;
 
       case 'supplier_activity_instance':
-        return queryOne(
+        result = queryOne(
           `SELECT sai.* FROM supplier_activity_instances sai
            JOIN supplier_projects sp ON sp.id = sai.supplier_project_id
            JOIN suppliers s ON s.id = sp.supplier_id
@@ -127,9 +145,10 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
            WHERE s.name = ? AND p.name = ? AND p.version = ? AND at.name = ?`,
           [data.supplierName, data.projectName, data.projectVersion, data.activityTemplateName]
         );
+        break;
 
       case 'supplier_schedule_item_instance':
-        return queryOne(
+        result = queryOne(
           `SELECT ssii.* FROM supplier_schedule_item_instances ssii
            JOIN supplier_activity_instances sai ON sai.id = ssii.supplier_activity_instance_id
            JOIN supplier_projects sp ON sp.id = sai.supplier_project_id
@@ -141,9 +160,10 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
            WHERE s.name = ? AND p.name = ? AND p.version = ? AND at.name = ? AND psi.name = ?`,
           [data.supplierName, data.projectName, data.projectVersion, data.activityTemplateName, data.name]
         );
+        break;
 
       case 'part':
-        return queryOne(
+        result = queryOne(
           `SELECT parts.* FROM parts
            JOIN supplier_location_codes slc ON slc.id = parts.supplier_location_code_id
            JOIN supplier_projects sp ON sp.id = parts.supplier_project_id
@@ -161,10 +181,15 @@ export function findExistingEntity(entityType: string, _matchKey: string, data: 
             data.partNumber,
           ]
         );
+        break;
 
       default:
-        return null;
+        result = null;
+        break;
     }
+
+    // Convert snake_case database columns to camelCase before returning
+    return result ? toCamelCase(result) : null;
   } catch (error) {
     console.error(`Error finding existing ${entityType}:`, error);
     return null;
