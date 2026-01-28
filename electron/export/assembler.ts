@@ -127,6 +127,7 @@ function exportActivityTemplates(ids: number[]): ExportedActivityTemplate[] {
     }
 
     templates.push({
+      id: template.id,
       name: template.name,
       description: template.description,
       category: template.category,
@@ -215,6 +216,7 @@ function exportProjects(ids: number[]): ExportedProject[] {
     });
 
     projects.push({
+      id: project.id,
       name: project.name,
       version: project.version,
       activities,
@@ -339,6 +341,7 @@ function exportSuppliers(ids: number[], options: ExportOptions): ExportedSupplie
     });
 
     suppliers.push({
+      id: supplier.id,
       name: supplier.name,
       notes: supplier.notes,
       locationCodes,

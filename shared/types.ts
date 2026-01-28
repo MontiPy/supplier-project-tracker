@@ -662,6 +662,7 @@ export interface ExportedScheduleItem {
 }
 
 export interface ExportedActivityTemplate {
+  id?: number; // Database ID for re-import matching
   name: string;
   description: string | null;
   category: string | null;
@@ -685,6 +686,7 @@ export interface ExportedProjectActivity {
 }
 
 export interface ExportedProject {
+  id?: number; // Database ID for re-import matching
   name: string;
   version: string;
   activities: ExportedProjectActivity[];
@@ -734,6 +736,7 @@ export interface ExportedSupplierLocationCode {
 }
 
 export interface ExportedSupplier {
+  id?: number; // Database ID for re-import matching
   name: string;
   notes: string | null;
   locationCodes: ExportedSupplierLocationCode[];

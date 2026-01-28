@@ -44,6 +44,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
   if (data.activityTemplates) {
     for (const template of data.activityTemplates) {
       const match = matchEntity('activity_template', {
+        id: template.id,
         name: template.name,
         description: template.description,
         category: template.category,
@@ -59,6 +60,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
   if (data.projects) {
     for (const project of data.projects) {
       const match = matchEntity('project', {
+        id: project.id,
         name: project.name,
         version: project.version,
       });
@@ -98,6 +100,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
   if (data.suppliers) {
     for (const supplier of data.suppliers) {
       const match = matchEntity('supplier', {
+        id: supplier.id,
         name: supplier.name,
         notes: supplier.notes,
       });

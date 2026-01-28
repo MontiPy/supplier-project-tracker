@@ -6,6 +6,25 @@ import { queryOne } from '../database';
 import type { MatchResult, MatchStatus } from '@shared/types';
 
 /**
+ * Map entity type to database table name
+ */
+function getTableName(entityType: string): string {
+  const tableMap: Record<string, string> = {
+    supplier: 'suppliers',
+    supplier_location_code: 'supplier_location_codes',
+    activity_template: 'activity_templates',
+    project: 'projects',
+    project_activity: 'project_activities',
+    project_schedule_item: 'project_schedule_items',
+    supplier_project: 'supplier_projects',
+    supplier_activity_instance: 'supplier_activity_instances',
+    supplier_schedule_item_instance: 'supplier_schedule_item_instances',
+    part: 'parts',
+  };
+  return tableMap[entityType] || entityType;
+}
+
+/**
  * Generate match key for an entity based on natural keys
  */
 export function generateMatchKey(entityType: string, data: any): string {
@@ -47,9 +66,20 @@ export function generateMatchKey(entityType: string, data: any): string {
 
 /**
  * Find existing entity by match key
+ * Prefers ID-based matching when ID is present in import data (for re-imports)
+ * Falls back to natural key matching for external imports
  */
 export function findExistingEntity(entityType: string, _matchKey: string, data: any): any | null {
   try {
+    // Try ID-based matching first if ID is present (re-import from same database)
+    if (data.id !== undefined && data.id !== null) {
+      const byId = queryOne(`SELECT * FROM ${getTableName(entityType)} WHERE id = ?`, [data.id]);
+      if (byId) {
+        return byId;
+      }
+    }
+
+    // Fall back to natural key matching (external imports or ID not found)
     switch (entityType) {
       case 'supplier':
         return queryOne('SELECT * FROM suppliers WHERE name = ?', [data.name]);
@@ -149,6 +179,7 @@ export function compareEntities(_entityType: string, existing: any, incoming: an
   // In the future, we could have entity-specific comparison logic
 
   // Only compare fields that exist in the INCOMING data (not database-only fields)
+  // Exclude 'id' (used for matching), 'created_at' (auto-generated), and nested arrays/objects
   const incomingKeys = Object.keys(incoming).filter((k) => !['id', 'created_at'].includes(k));
 
   // Check if any field has changed
