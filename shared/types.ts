@@ -650,6 +650,7 @@ export interface ExportMetadata {
 }
 
 export interface ExportedScheduleItem {
+  id?: number; // Database ID for re-import matching
   name: string;
   kind: ScheduleItemKind;
   anchorType: AnchorType;
@@ -679,6 +680,7 @@ export interface ExportedActivityTemplate {
 }
 
 export interface ExportedProjectActivity {
+  id?: number; // Database ID for re-import matching
   activityTemplateName: string;
   sortOrder: number;
   scheduleItems: ExportedScheduleItem[];
@@ -693,6 +695,7 @@ export interface ExportedProject {
 }
 
 export interface ExportedSupplierScheduleItemInstance {
+  id?: number; // Database ID for re-import matching
   name: string;
   plannedDate: string | null;
   actualDate: string | null;
@@ -703,6 +706,7 @@ export interface ExportedSupplierScheduleItemInstance {
 }
 
 export interface ExportedSupplierActivityInstance {
+  id?: number; // Database ID for re-import matching
   activityTemplateName: string;
   status: ActivityStatus;
   scopeOverride: ScopeOverride;
@@ -714,6 +718,7 @@ export interface ExportedSupplierActivityInstance {
 }
 
 export interface ExportedPart {
+  id?: number; // Database ID for re-import matching
   supplierNumber: string;
   locationCode: string;
   partNumber: string;
@@ -723,6 +728,7 @@ export interface ExportedPart {
 }
 
 export interface ExportedSupplierProject {
+  id?: number; // Database ID for re-import matching
   projectName: string;
   projectVersion: string;
   nmrRank: string | null;
@@ -731,6 +737,7 @@ export interface ExportedSupplierProject {
 }
 
 export interface ExportedSupplierLocationCode {
+  id?: number; // Database ID for re-import matching
   supplierNumber: string;
   locationCode: string;
 }

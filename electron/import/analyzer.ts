@@ -69,6 +69,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
       // Analyze project activities
       for (const activity of project.activities || []) {
         const activityMatch = matchEntity('project_activity', {
+          id: activity.id,
           projectName: project.name,
           projectVersion: project.version,
           activityTemplateName: activity.activityTemplateName,
@@ -79,6 +80,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
         // Analyze project schedule items
         for (const item of activity.scheduleItems || []) {
           const itemMatch = matchEntity('project_schedule_item', {
+            id: item.id,
             projectName: project.name,
             projectVersion: project.version,
             activityTemplateName: activity.activityTemplateName,
@@ -109,6 +111,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
       // Analyze location codes
       for (const locationCode of supplier.locationCodes || []) {
         const locationMatch = matchEntity('supplier_location_code', {
+          id: locationCode.id,
           supplierName: supplier.name,
           supplierNumber: locationCode.supplierNumber,
           locationCode: locationCode.locationCode,
@@ -119,6 +122,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
       // Analyze supplier projects
       for (const supplierProject of supplier.projects || []) {
         const supplierProjectMatch = matchEntity('supplier_project', {
+          id: supplierProject.id,
           supplierName: supplier.name,
           projectName: supplierProject.projectName,
           projectVersion: supplierProject.projectVersion,
@@ -129,6 +133,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
         // Analyze supplier activities
         for (const activity of supplierProject.activities || []) {
           const activityMatch = matchEntity('supplier_activity_instance', {
+            id: activity.id,
             supplierName: supplier.name,
             projectName: supplierProject.projectName,
             projectVersion: supplierProject.projectVersion,
@@ -141,6 +146,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
           // Analyze supplier schedule items
           for (const item of activity.scheduleItems || []) {
             const itemMatch = matchEntity('supplier_schedule_item_instance', {
+              id: item.id,
               supplierName: supplier.name,
               projectName: supplierProject.projectName,
               projectVersion: supplierProject.projectVersion,
@@ -160,6 +166,7 @@ export function analyzeImport(data: ExportedData): ImportAnalysis {
         // Analyze parts
         for (const part of supplierProject.parts || []) {
           const partMatch = matchEntity('part', {
+            id: part.id,
             supplierName: supplier.name,
             projectName: supplierProject.projectName,
             projectVersion: supplierProject.projectVersion,

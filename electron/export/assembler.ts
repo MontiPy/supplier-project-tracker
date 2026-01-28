@@ -94,6 +94,7 @@ function exportActivityTemplates(ids: number[]): ExportedActivityTemplate[] {
         : item.offset_days;
 
       return {
+        id: item.id,
         name: item.name,
         kind: item.kind as ScheduleItemKind,
         anchorType,
@@ -183,6 +184,7 @@ function exportProjects(ids: number[]): ExportedProject[] {
           : item.offset_days;
 
         return {
+          id: item.id,
           name: item.name,
           kind: item.kind as ScheduleItemKind,
           anchorType,
@@ -208,6 +210,7 @@ function exportProjects(ids: number[]): ExportedProject[] {
       const dependencies = depRows.map((d: any) => d.depends_on_name);
 
       return {
+        id: activity.id,
         activityTemplateName: activity.activity_template_name,
         sortOrder: activity.sort_order,
         scheduleItems,
@@ -240,6 +243,7 @@ function exportSuppliers(ids: number[], options: ExportOptions): ExportedSupplie
     );
 
     const locationCodes: ExportedSupplierLocationCode[] = locationCodeRows.map((loc: any) => ({
+      id: loc.id,
       supplierNumber: loc.supplier_number,
       locationCode: loc.location_code,
     }));
@@ -279,6 +283,7 @@ function exportSuppliers(ids: number[], options: ExportOptions): ExportedSupplie
           );
 
           scheduleItems = itemRows.map((item: any) => ({
+            id: item.id,
             name: item.name,
             plannedDate: item.planned_date,
             actualDate: item.actual_date,
@@ -304,6 +309,7 @@ function exportSuppliers(ids: number[], options: ExportOptions): ExportedSupplie
         }
 
         return {
+          id: activity.id,
           activityTemplateName: activity.activity_template_name,
           status: activity.status,
           scopeOverride: activity.scope_override,
@@ -323,6 +329,7 @@ function exportSuppliers(ids: number[], options: ExportOptions): ExportedSupplie
       );
 
       const parts: ExportedPart[] = partRows.map((part: any) => ({
+        id: part.id,
         supplierNumber: part.supplier_number,
         locationCode: part.location_code,
         partNumber: part.part_number,
@@ -332,6 +339,7 @@ function exportSuppliers(ids: number[], options: ExportOptions): ExportedSupplie
       }));
 
       return {
+        id: sp.id,
         projectName: sp.project_name,
         projectVersion: sp.project_version,
         nmrRank: sp.supplier_project_nmr_rank,
