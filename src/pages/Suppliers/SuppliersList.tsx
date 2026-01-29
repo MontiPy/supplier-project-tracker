@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Pencil } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -21,13 +21,16 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { StatusBadge } from '@/components/ui/status-badge';
-import type { SupplierWithStats, CreateSupplierParams } from '@shared/types';
+import { EditSupplierDialog } from '@/components/suppliers/EditSupplierDialog';
+import type { SupplierWithStats, CreateSupplierParams, Supplier } from '@shared/types';
 
 export function SuppliersList() {
   const navigate = useNavigate();
   const [suppliers, setSuppliers] = useState<SupplierWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState<CreateSupplierParams>({
     name: '',
@@ -50,6 +53,11 @@ export function SuppliersList() {
   function openCreateDialog() {
     setFormData({ name: '', notes: '' });
     setDialogOpen(true);
+  }
+
+  function openEditDialog(supplier: SupplierWithStats) {
+    setEditingSupplier(supplier);
+    setEditDialogOpen(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -170,6 +178,16 @@ export function SuppliersList() {
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditDialog(supplier);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
                         variant="outline"
                         size="sm"
                         onClick={(e) => {
@@ -231,6 +249,13 @@ export function SuppliersList() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <EditSupplierDialog
+        supplier={editingSupplier}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onSuccess={loadSuppliers}
+      />
     </div>
   );
 }
