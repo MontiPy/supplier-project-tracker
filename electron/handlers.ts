@@ -2534,6 +2534,7 @@ function handlePartsDelete(_event: any, id: number): APIResponse<void> {
 import { assembleExport, exportFullDatabase } from './export/assembler.js';
 import { parseImportFile } from './import/parser.js';
 import { analyzeImport } from './import/analyzer.js';
+import { executeImport } from './import/executor.js';
 import type { ExportOptions, ExportedData, ImportAnalysis } from '@shared/types';
 
 function handleExportGenerateJson(
@@ -2629,6 +2630,19 @@ function handleImportAnalyze(_event: any, data: ExportedData): APIResponse<Impor
     return createSuccessResponse(analysis);
   } catch (error) {
     console.error('Error analyzing import:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleImportExecute(_event: any, data: ExportedData, analysis: ImportAnalysis): APIResponse<void> {
+  try {
+    const result = executeImport(data, analysis);
+    if (!result.success) {
+      return createErrorResponse(result.error || 'Import execution failed');
+    }
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error executing import:', error);
     return createErrorResponse(String(error));
   }
 }
@@ -3621,6 +3635,7 @@ export function registerHandlers(): void {
   ipcMain.handle('import:select-file', handleImportSelectFile);
   ipcMain.handle('import:parse-file', handleImportParseFile);
   ipcMain.handle('import:analyze', handleImportAnalyze);
+  ipcMain.handle('import:execute', handleImportExecute);
 
   // Phase 4: Propagation + Audit
   ipcMain.handle('projects:preview-propagation', handleProjectsPreviewPropagation);

@@ -122,6 +122,32 @@ export function ImportTab() {
     }
   }
 
+  async function handleApplyChanges() {
+    if (!state.parsedData || !state.analysis) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await window.sqts.importData.execute(state.parsedData, state.analysis);
+
+      if (!response.success) {
+        setError(response.error || 'Failed to apply changes');
+        setLoading(false);
+        return;
+      }
+
+      setState({
+        ...state,
+        step: 'complete',
+      });
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleBackToSelect() {
     setState({
       step: 'select',
@@ -419,8 +445,54 @@ export function ImportTab() {
             <ChevronLeft className="mr-2 h-4 w-4" />
             Back to Review
           </Button>
-          <Button size="lg" disabled>
-            Apply Changes (Phase 5)
+          <Button size="lg" onClick={handleApplyChanges} disabled={loading}>
+            {loading ? 'Applying Changes...' : 'Apply Changes'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Step 5: Complete
+  if (state.step === 'complete') {
+    return (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-green-600">Import Complete</CardTitle>
+            <CardDescription>
+              Changes have been successfully applied to the database
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-lg bg-green-50 p-4 border border-green-200">
+              <p className="text-sm text-green-800">
+                The import has been completed successfully. All changes have been applied to the database.
+              </p>
+            </div>
+
+            {state.analysis && (
+              <div className="space-y-2">
+                <h3 className="font-medium">Summary:</h3>
+                <ul className="text-sm space-y-1">
+                  {Object.entries(state.analysis.summary).map(([entityType, counts]) => {
+                    const total = counts.new + counts.modified;
+                    if (total === 0) return null;
+                    return (
+                      <li key={entityType}>
+                        <strong>{entityType}:</strong> {counts.new} new, {counts.modified} modified
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="flex justify-end">
+          <Button onClick={handleBackToSelect}>
+            Import Another File
           </Button>
         </div>
       </div>

@@ -271,6 +271,8 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('import:parse-file', filePath),
     analyze: (data: ExportedData): Promise<APIResponse<ImportAnalysis>> =>
       ipcRenderer.invoke('import:analyze', data),
+    execute: (data: ExportedData, analysis: ImportAnalysis): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('import:execute', data, analysis),
   },
 
   // Audit API (Phase 4)
@@ -434,6 +436,7 @@ export interface SQTSAPI {
     selectFile: () => Promise<APIResponse<string | null>>;
     parseFile: (filePath: string) => Promise<APIResponse<any>>;
     analyze: (data: ExportedData) => Promise<APIResponse<ImportAnalysis>>;
+    execute: (data: ExportedData, analysis: ImportAnalysis) => Promise<APIResponse<void>>;
   };
   audit: {
     list: (params: AuditEventQuery) => Promise<APIResponse<AuditEvent[]>>;
