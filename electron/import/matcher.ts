@@ -258,8 +258,19 @@ export function compareEntities(_entityType: string, existing: any, incoming: an
     const existingValue = existing[key];
     const incomingValue = incoming[key];
 
+    // Skip fields that don't exist in the existing entity
+    // (e.g., 'name' in supplier_schedule_item_instance comes from joined table)
+    if (existingValue === undefined && key in incoming) {
+      continue;
+    }
+
     // Handle null/undefined equivalence
     if (existingValue !== incomingValue) {
+      // Treat null and 0 as equivalent for offsetDays
+      if (key === 'offsetDays' && (existingValue == null || existingValue === 0) && (incomingValue == null || incomingValue === 0)) {
+        continue;
+      }
+
       if (!(existingValue == null && incomingValue == null)) {
         return 'MODIFIED';
       }
@@ -288,7 +299,17 @@ export function getEntityChanges(
     const existingValue = existing[key];
     const incomingValue = incoming[key];
 
+    // Skip fields that don't exist in the existing entity
+    if (existingValue === undefined && key in incoming) {
+      continue;
+    }
+
     if (existingValue !== incomingValue) {
+      // Treat null and 0 as equivalent for offsetDays
+      if (key === 'offsetDays' && (existingValue == null || existingValue === 0) && (incomingValue == null || incomingValue === 0)) {
+        continue;
+      }
+
       if (!(existingValue == null && incomingValue == null)) {
         changes.push({
           field: key,
