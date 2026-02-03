@@ -20,7 +20,9 @@
       "Bash(git ls-tree:*)",
       "Bash(wc:*)",
       "Bash(npm run type-check:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(git commit:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

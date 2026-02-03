@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -21,13 +21,16 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { VersionBadge } from '@/components/ui/status-badge';
-import type { ProjectWithStats, CreateProjectParams } from '@shared/types';
+import { EditProjectDialog } from '@/components/projects/EditProjectDialog';
+import type { ProjectWithStats, CreateProjectParams, Project } from '@shared/types';
 
 export function ProjectsList() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState<CreateProjectParams>({
     name: '',
@@ -51,6 +54,11 @@ export function ProjectsList() {
   function openCreateDialog() {
     setFormData({ name: '', version: '', defaultAnchorRule: '' });
     setDialogOpen(true);
+  }
+
+  function openEditDialog(project: ProjectWithStats) {
+    setEditingProject(project);
+    setEditDialogOpen(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -169,6 +177,16 @@ export function ProjectsList() {
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditDialog(project);
+                        }}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
                         variant="outline"
                         size="sm"
                         onClick={(e) => {
@@ -230,6 +248,13 @@ export function ProjectsList() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <EditProjectDialog
+        project={editingProject}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onSuccess={loadProjects}
+      />
     </div>
   );
 }

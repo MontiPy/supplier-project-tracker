@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Info } from 'lucide-react';
+import { Info, Pencil } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/table';
 import { TypeBadge, VersionBadge } from '@/components/ui/status-badge';
 import PropagationPreviewModal from './PropagationPreviewModal';
+import { EditProjectScheduleItemDialog } from '@/components/projects/EditProjectScheduleItemDialog';
 import type { ProjectDetail, ProjectActivityDetail, ScheduleItemWithDates } from '@shared/types';
 
 function formatDate(dateStr: string | null): string {
@@ -148,6 +149,8 @@ export function ProjectConfigureDates() {
   const [propagating, setPropagating] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [propagationModalOpen, setPropagationModalOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<ScheduleItemWithDates | null>(null);
 
   useEffect(() => {
     loadProjectDetail();
@@ -290,6 +293,15 @@ export function ProjectConfigureDates() {
     await loadProjectDetail();
   }
 
+  function openEditDialog(item: ScheduleItemWithDates) {
+    setEditingItem(item);
+    setEditDialogOpen(true);
+  }
+
+  async function handleEditSuccess() {
+    await loadProjectDetail();
+  }
+
   if (loading) {
     return (
       <div className="p-8">
@@ -420,6 +432,7 @@ export function ProjectConfigureDates() {
                       <TableHead>Item</TableHead>
                       <TableHead>Planned Date</TableHead>
                       <TableHead>Calculation</TableHead>
+                      <TableHead className="w-14">Edit</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -434,6 +447,15 @@ export function ProjectConfigureDates() {
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {getCalculation(item, itemById)}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditDialog(item)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -464,6 +486,14 @@ export function ProjectConfigureDates() {
         onSuccess={() => {
           loadProjectDetail();
         }}
+      />
+
+      <EditProjectScheduleItemDialog
+        item={editingItem}
+        allItems={activity?.scheduleItems || []}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onSuccess={handleEditSuccess}
       />
     </div>
   );
