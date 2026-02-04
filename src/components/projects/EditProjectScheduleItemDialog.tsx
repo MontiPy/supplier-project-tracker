@@ -10,11 +10,12 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { ScheduleItemWithDates, UpdateScheduleItemParams, ScheduleItemKind, AnchorType } from '@shared/types';
+import type { ScheduleItemWithDates, UpdateScheduleItemParams, ScheduleItemKind, AnchorType, ProjectMilestone } from '@shared/types';
 
 interface EditProjectScheduleItemDialogProps {
   item: ScheduleItemWithDates | null;
   allItems: ScheduleItemWithDates[];
+  projectMilestones?: ProjectMilestone[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
@@ -23,6 +24,7 @@ interface EditProjectScheduleItemDialogProps {
 export function EditProjectScheduleItemDialog({
   item,
   allItems,
+  projectMilestones = [],
   open,
   onOpenChange,
   onSuccess,
@@ -34,6 +36,7 @@ export function EditProjectScheduleItemDialog({
     anchorRefId: null as number | null,
     offsetDays: 0,
     fixedDate: '',
+    projectMilestoneId: null as number | null,
   });
   const [loading, setLoading] = useState(false);
 
@@ -46,6 +49,7 @@ export function EditProjectScheduleItemDialog({
         anchorRefId: item.anchorRefId,
         offsetDays: item.offsetDays ?? 0,
         fixedDate: item.fixedDate || '',
+        projectMilestoneId: item.projectMilestoneId ?? null,
       });
     }
   }, [item, open]);
@@ -64,8 +68,13 @@ export function EditProjectScheduleItemDialog({
 
     if (formData.anchorType === 'FIXED_DATE') {
       params.fixedDate = formData.fixedDate || null;
+      params.projectMilestoneId = null;
     } else if (formData.anchorType === 'SCHEDULE_ITEM') {
       params.anchorRefId = formData.anchorRefId || undefined;
+      params.offsetDays = formData.offsetDays;
+      params.projectMilestoneId = null;
+    } else if (formData.anchorType === 'PROJECT_MILESTONE') {
+      params.projectMilestoneId = formData.projectMilestoneId;
       params.offsetDays = formData.offsetDays;
     }
 
@@ -111,6 +120,9 @@ export function EditProjectScheduleItemDialog({
               >
                 <option value="FIXED_DATE">Fixed Date</option>
                 <option value="SCHEDULE_ITEM">Schedule Item (Milestone Reference)</option>
+                {projectMilestones.length > 0 && (
+                  <option value="PROJECT_MILESTONE">Project Milestone</option>
+                )}
               </select>
             </div>
 
@@ -147,6 +159,54 @@ export function EditProjectScheduleItemDialog({
                         <option key={milestone.id} value={milestone.id}>
                           {milestone.name}
                           {milestone.plannedDate && ` (${milestone.plannedDate})`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="offsetDays">Offset Days</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="offsetDays"
+                      type="number"
+                      value={formData.offsetDays}
+                      onChange={(e) => setFormData({ ...formData, offsetDays: Number(e.target.value) })}
+                      placeholder="0"
+                    />
+                    <span className="text-sm text-muted-foreground whitespace-nowrap">
+                      (negative = before, positive = after)
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Example: -14 means 14 days before the milestone, +7 means 7 days after
+                  </p>
+                </div>
+              </>
+            )}
+
+            {formData.anchorType === 'PROJECT_MILESTONE' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="projectMilestone">Project Milestone</Label>
+                  {projectMilestones.length === 0 ? (
+                    <div className="text-sm text-red-500">
+                      No project milestones defined.
+                    </div>
+                  ) : (
+                    <select
+                      id="projectMilestone"
+                      className="w-full px-3 py-2 border rounded-md"
+                      value={formData.projectMilestoneId || ''}
+                      onChange={(e) => setFormData({ ...formData, projectMilestoneId: Number(e.target.value) || null })}
+                      required
+                    >
+                      <option value="">Select project milestone...</option>
+                      {projectMilestones.map((ms) => (
+                        <option key={ms.id} value={ms.id}>
+                          {ms.name}
+                          {ms.date && ` (${ms.date})`}
                         </option>
                       ))}
                     </select>

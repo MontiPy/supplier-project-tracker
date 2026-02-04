@@ -14,7 +14,8 @@ import type { ProjectScheduleItem, ScheduleItemWithDates } from '../shared/types
 export function calculateScheduleDates(
   scheduleItems: ProjectScheduleItem[],
   useBusinessDays: boolean = false,
-  actualDates?: Map<number, string | null>
+  actualDates?: Map<number, string | null>,
+  milestoneDates?: Map<number, string | null>
 ): ScheduleItemWithDates[] {
   const resolvedDates = new Map<number, string>(); // itemId -> computed date
   const results: ScheduleItemWithDates[] = [];
@@ -35,7 +36,8 @@ export function calculateScheduleDates(
         item,
         resolvedDates,
         useBusinessDays,
-        actualDates
+        actualDates,
+        milestoneDates
       );
 
       if (plannedDate !== null) {
@@ -98,7 +100,8 @@ function calculatePlannedDate(
   item: ProjectScheduleItem,
   resolvedDates: Map<number, string>,
   useBusinessDays: boolean = false,
-  actualDates?: Map<number, string | null>
+  actualDates?: Map<number, string | null>,
+  milestoneDates?: Map<number, string | null>
 ): string | null {
   if (item.overrideEnabled && item.overrideDate) {
     return item.overrideDate;
@@ -136,6 +139,22 @@ function calculatePlannedDate(
         return completionDate;
       }
       return addDays(completionDate, item.offsetDays, useBusinessDays);
+
+    case 'PROJECT_MILESTONE':
+      if (item.projectMilestoneId === null) {
+        return null;
+      }
+      if (!milestoneDates) {
+        return null;
+      }
+      const msDate = milestoneDates.get(item.projectMilestoneId) || null;
+      if (!msDate) {
+        return null;
+      }
+      if (item.offsetDays === null) {
+        return msDate;
+      }
+      return addDays(msDate, item.offsetDays, useBusinessDays);
 
     default:
       return null;
@@ -193,24 +212,25 @@ export function validateScheduleItems(items: ProjectScheduleItem[]): string[] {
   // Build dependency graph
   const graph = new Map<number, number | null>(); // itemId -> anchorRefId
   for (const item of items) {
-    if (item.anchorType === 'SCHEDULE_ITEM') {
+    if (item.anchorType === 'SCHEDULE_ITEM' || item.anchorType === 'COMPLETION') {
       graph.set(item.id, item.anchorRefId);
     } else {
+      // FIXED_DATE and PROJECT_MILESTONE have no intra-item dependencies
       graph.set(item.id, null);
     }
   }
 
   // Check for self-references
   for (const item of items) {
-    if (item.anchorType === 'SCHEDULE_ITEM' && item.anchorRefId === item.id) {
+    if ((item.anchorType === 'SCHEDULE_ITEM' || item.anchorType === 'COMPLETION') && item.anchorRefId === item.id) {
       errors.push(`Schedule item "${item.name}" (ID ${item.id}) references itself`);
     }
   }
 
   // Check for circular dependencies using cycle detection
   for (const startItem of items) {
-    if (startItem.anchorType !== 'SCHEDULE_ITEM') {
-      continue; // No dependency
+    if (startItem.anchorType !== 'SCHEDULE_ITEM' && startItem.anchorType !== 'COMPLETION') {
+      continue; // No dependency (FIXED_DATE and PROJECT_MILESTONE are external anchors)
     }
 
     const visited = new Set<number>();

@@ -122,9 +122,9 @@ function processActivityTemplate(template: ExportedActivityTemplate, match: Matc
 
       run(
         `INSERT INTO activity_template_schedule_items
-         (activity_template_id, kind, name, anchor_type, anchor_ref_id, offset_days, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [templateId, item.kind, item.name, item.anchorType, anchorRefId, item.offsetDays, i]
+         (activity_template_id, kind, name, anchor_type, anchor_ref_id, offset_days, sort_order, project_milestone_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [templateId, item.kind, item.name, item.anchorType, anchorRefId, item.offsetDays, i, item.projectMilestoneName || null]
       );
     }
   }
@@ -169,6 +169,18 @@ function processProject(project: ExportedProject, match: MatchResult): void {
   // Store the ID mapping
   entityIdMap.set(`project:${project.name}/${project.version}`, projectId);
 
+  // Process project milestones (delete and recreate for simplicity)
+  run('DELETE FROM project_milestones WHERE project_id = ?', [projectId]);
+
+  if (project.milestones && project.milestones.length > 0) {
+    for (const ms of project.milestones) {
+      run(
+        'INSERT INTO project_milestones (project_id, name, date, sort_order) VALUES (?, ?, ?, ?)',
+        [projectId, ms.name, ms.date, ms.sortOrder]
+      );
+    }
+  }
+
   // Process project activities (delete and recreate for simplicity)
   run('DELETE FROM project_schedule_items WHERE project_activity_id IN (SELECT id FROM project_activities WHERE project_id = ?)', [projectId]);
   run('DELETE FROM project_activity_dependencies WHERE project_activity_id IN (SELECT id FROM project_activities WHERE project_id = ?)', [projectId]);
@@ -207,10 +219,20 @@ function processProject(project: ExportedProject, match: MatchResult): void {
             anchorRefId = anchorItem?.id || null;
           }
 
+          // Resolve project milestone name to ID if applicable
+          let projectMilestoneId: number | null = null;
+          if (item.anchorType === 'PROJECT_MILESTONE' && item.projectMilestoneName) {
+            const milestone = queryOne(
+              'SELECT id FROM project_milestones WHERE project_id = ? AND name = ?',
+              [projectId, item.projectMilestoneName]
+            );
+            projectMilestoneId = milestone?.id || null;
+          }
+
           run(
             `INSERT INTO project_schedule_items
-             (project_activity_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, sort_order, override_date, override_enabled)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (project_activity_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, sort_order, override_date, override_enabled, project_milestone_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               activityId,
               item.kind,
@@ -222,6 +244,7 @@ function processProject(project: ExportedProject, match: MatchResult): void {
               i,
               item.overrideDate,
               item.overrideEnabled ? 1 : 0,
+              projectMilestoneId,
             ]
           );
         }

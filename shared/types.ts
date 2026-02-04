@@ -39,6 +39,19 @@ export interface Project {
 }
 
 // ============================================================================
+// Project Milestones
+// ============================================================================
+
+export interface ProjectMilestone {
+  id: number;
+  projectId: number;
+  name: string;
+  date: string | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+// ============================================================================
 // Project Structure
 // ============================================================================
 
@@ -56,7 +69,8 @@ export type ScheduleItemKind = 'MILESTONE' | 'TASK';
 export type AnchorType =
   | 'FIXED_DATE'
   | 'SCHEDULE_ITEM'
-  | 'COMPLETION';
+  | 'COMPLETION'
+  | 'PROJECT_MILESTONE';
 
 export interface ProjectScheduleItem {
   id: number;
@@ -70,6 +84,7 @@ export interface ProjectScheduleItem {
   fixedDate: string | null;
   overrideDate: string | null;
   overrideEnabled: boolean;
+  projectMilestoneId: number | null;
   sortOrder: number;
   createdAt: string;
 }
@@ -128,6 +143,7 @@ export interface ActivityTemplateScheduleItem {
   anchorType: AnchorType;
   anchorRefId: number | null;
   offsetDays: number | null;
+  projectMilestoneName: string | null;
   createdAt: string;
 }
 
@@ -286,6 +302,21 @@ export interface UpdateProjectParams {
   defaultAnchorRule?: string;
 }
 
+// Project Milestone operations
+export interface CreateProjectMilestoneParams {
+  projectId: number;
+  name: string;
+  date?: string;
+  sortOrder?: number;
+}
+
+export interface UpdateProjectMilestoneParams {
+  id: number;
+  name?: string;
+  date?: string | null;
+  sortOrder?: number;
+}
+
 // Project Activity operations
 export interface CreateProjectActivityParams {
   projectId: number;
@@ -311,6 +342,7 @@ export interface CreateScheduleItemParams {
   templateItemId?: number;
   overrideDate?: string | null;
   overrideEnabled?: boolean;
+  projectMilestoneId?: number;
 }
 
 export interface UpdateScheduleItemParams {
@@ -323,6 +355,7 @@ export interface UpdateScheduleItemParams {
   sortOrder?: number;
   overrideDate?: string | null;
   overrideEnabled?: boolean;
+  projectMilestoneId?: number | null;
 }
 
 // Activity template schedule item operations
@@ -333,6 +366,7 @@ export interface CreateActivityTemplateScheduleItemParams {
   anchorType: AnchorType;
   anchorRefId?: number;
   offsetDays?: number;
+  projectMilestoneName?: string;
 }
 
 export interface UpdateActivityTemplateScheduleItemParams {
@@ -342,6 +376,7 @@ export interface UpdateActivityTemplateScheduleItemParams {
   anchorType?: AnchorType;
   anchorRefId?: number;
   offsetDays?: number;
+  projectMilestoneName?: string | null;
 }
 
 export interface UpsertActivityTemplateApplicabilityRuleParams {
@@ -440,6 +475,7 @@ export interface ProjectActivityDetail extends ProjectActivity {
 }
 
 export interface ProjectDetail extends Project {
+  milestones: ProjectMilestone[];
   activities: ProjectActivityDetail[];
 }
 
@@ -663,6 +699,7 @@ export interface ExportedScheduleItem {
   sortOrder?: number;
   overrideDate?: string | null;
   overrideEnabled?: boolean;
+  projectMilestoneName?: string | null; // Name of project milestone (for PROJECT_MILESTONE anchor type)
 }
 
 export interface ExportedActivityTemplate {
@@ -690,10 +727,17 @@ export interface ExportedProjectActivity {
   dependencies: string[]; // Array of activity template names
 }
 
+export interface ExportedProjectMilestone {
+  name: string;
+  date: string | null;
+  sortOrder: number;
+}
+
 export interface ExportedProject {
   id?: number; // Database ID for re-import matching
   name: string;
   version: string;
+  milestones?: ExportedProjectMilestone[];
   activities: ExportedProjectActivity[];
 }
 
@@ -858,4 +902,63 @@ export interface ProjectSyncStatus {
 export interface TemplateSyncStatus {
   templateVersion: number;
   projects: ProjectSyncStatus[];
+}
+
+// ============================================================================
+// Project Templates
+// ============================================================================
+
+export interface ProjectTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectTemplateMilestone {
+  id: number;
+  templateId: number;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface ProjectTemplateActivity {
+  id: number;
+  templateId: number;
+  activityTemplateId: number;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface ProjectTemplateDetail extends ProjectTemplate {
+  milestones: ProjectTemplateMilestone[];
+  activities: Array<ProjectTemplateActivity & { activityTemplateName: string }>;
+}
+
+export interface CreateProjectTemplateParams {
+  name: string;
+  description?: string;
+  milestones?: Array<{ name: string; sortOrder: number }>;
+  activityTemplateIds?: number[];
+}
+
+export interface UpdateProjectTemplateParams {
+  id: number;
+  name?: string;
+  description?: string;
+}
+
+export interface ApplyTemplateToProjectParams {
+  templateId: number;
+  projectId: number;
+  mergeStrategy: 'REPLACE_ALL' | 'MERGE_ADD';
+}
+
+export interface ApplyTemplateResult {
+  milestonesCreated: number;
+  activitiesCreated: number;
+  scheduleItemsLinked: number;
+  errors: string[];
 }

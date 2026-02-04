@@ -13,6 +13,7 @@ import { PartsList } from './pages/Parts/PartsList';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 import { ReportsPage } from './pages/Reports/ReportsPage';
 import { ImportExportPage } from './pages/ImportExport/ImportExportPage';
+import { ProjectTemplatesPage } from './pages/ProjectTemplates/ProjectTemplatesPage';
 import { Toaster } from './components/ui/toaster';
 
 function App() {
@@ -34,6 +35,7 @@ function App() {
         <Route path="/activity-library" element={<ActivityLibraryPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="/parts" element={<PartsList />} />
+        <Route path="/project-templates" element={<ProjectTemplatesPage />} />
         <Route path="/import-export" element={<ImportExportPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/reports" element={<ReportsPage />} />

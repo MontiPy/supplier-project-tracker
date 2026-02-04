@@ -163,6 +163,15 @@ export function previewPropagation(projectId: number): PropagationPreview {
       [projectId]
     );
 
+    // Get project milestone dates
+    const milestoneRows = query(
+      'SELECT id, date FROM project_milestones WHERE project_id = ?',
+      [projectId]
+    );
+    const milestoneDates = new Map<number, string | null>(
+      milestoneRows.map((row: any) => [row.id, row.date || null])
+    );
+
     const actualDates = new Map(
       instances.map((item: any) => [item.project_schedule_item_id, item.actual_date || null])
     );
@@ -171,7 +180,8 @@ export function previewPropagation(projectId: number): PropagationPreview {
     const recalculated = calculateScheduleDates(
       toCamelCase<ProjectScheduleItem[]>(projectScheduleItems),
       policy.useBusinessDays,
-      actualDates
+      actualDates,
+      milestoneDates
     );
 
     // Create lookup map for recalculated dates

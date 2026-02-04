@@ -11,12 +11,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import type { ScheduleItemKind, AnchorType, ScheduleItemWithDates } from '../../../shared/types';
+import type { ScheduleItemKind, AnchorType, ScheduleItemWithDates, ProjectMilestone } from '../../../shared/types';
 
 interface ScheduleItemDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   activityId: number | null;
+  projectId: number | null;
   onSuccess: () => void;
 }
 
@@ -24,6 +25,7 @@ export default function ScheduleItemDialog({
   open,
   onOpenChange,
   activityId,
+  projectId,
   onSuccess,
 }: ScheduleItemDialogProps) {
   const { toast } = useToast();
@@ -32,20 +34,24 @@ export default function ScheduleItemDialog({
   const [anchorType, setAnchorType] = useState<AnchorType>('FIXED_DATE');
   const [fixedDate, setFixedDate] = useState('');
   const [anchorRefId, setAnchorRefId] = useState<number | null>(null);
+  const [projectMilestoneId, setProjectMilestoneId] = useState<number | null>(null);
   const [offsetDays, setOffsetDays] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItemWithDates[]>([]);
+  const [projectMilestones, setProjectMilestones] = useState<ProjectMilestone[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
 
   useEffect(() => {
     if (open && activityId) {
       loadScheduleItems();
+      loadProjectMilestones();
       // Reset form
       setKind('MILESTONE');
       setName('');
       setAnchorType('FIXED_DATE');
       setFixedDate('');
       setAnchorRefId(null);
+      setProjectMilestoneId(null);
       setOffsetDays(0);
     }
   }, [open, activityId]);
@@ -64,6 +70,17 @@ export default function ScheduleItemDialog({
       }
     }
     setLoadingItems(false);
+  }
+
+  async function loadProjectMilestones() {
+    if (!projectId) return;
+    const response = await window.sqts.projectMilestones.list(projectId);
+    if (response.success && response.data) {
+      setProjectMilestones(response.data);
+      if (response.data.length > 0) {
+        setProjectMilestoneId(response.data[0].id);
+      }
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -90,6 +107,11 @@ export default function ScheduleItemDialog({
       return;
     }
 
+    if (anchorType === 'PROJECT_MILESTONE' && !projectMilestoneId) {
+      toast({ title: 'Error', description: 'Please select a project milestone', variant: 'destructive' });
+      return;
+    }
+
     setSubmitting(true);
     const response = await window.sqts.scheduleItems.create({
       projectActivityId: activityId,
@@ -99,6 +121,7 @@ export default function ScheduleItemDialog({
       anchorRefId: anchorType === 'SCHEDULE_ITEM' && anchorRefId !== null ? anchorRefId : undefined,
       offsetDays: anchorType !== 'FIXED_DATE' ? offsetDays : undefined,
       fixedDate: anchorType === 'FIXED_DATE' ? fixedDate : undefined,
+      projectMilestoneId: anchorType === 'PROJECT_MILESTONE' && projectMilestoneId !== null ? projectMilestoneId : undefined,
     });
 
     setSubmitting(false);
@@ -175,6 +198,9 @@ export default function ScheduleItemDialog({
               >
                 <option value="FIXED_DATE">Fixed Date</option>
                 <option value="SCHEDULE_ITEM">Schedule Item (Milestone Reference)</option>
+                {projectMilestones.length > 0 && (
+                  <option value="PROJECT_MILESTONE">Project Milestone</option>
+                )}
               </select>
             </div>
 
@@ -241,6 +267,53 @@ export default function ScheduleItemDialog({
               </>
             )}
 
+            {anchorType === 'PROJECT_MILESTONE' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="projectMilestone">Project Milestone</Label>
+                  {projectMilestones.length === 0 ? (
+                    <div className="text-sm text-red-500">
+                      No project milestones defined. Add milestones from the Project Detail page.
+                    </div>
+                  ) : (
+                    <select
+                      id="projectMilestone"
+                      className="w-full px-3 py-2 border rounded-md"
+                      value={projectMilestoneId || ''}
+                      onChange={(e) => setProjectMilestoneId(Number(e.target.value))}
+                      required
+                    >
+                      {projectMilestones.map((ms) => (
+                        <option key={ms.id} value={ms.id}>
+                          {ms.name}
+                          {ms.date && ` (${ms.date})`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="offsetDays">Offset Days</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="offsetDays"
+                      type="number"
+                      value={offsetDays}
+                      onChange={(e) => setOffsetDays(Number(e.target.value))}
+                      placeholder="0"
+                    />
+                    <span className="text-sm text-gray-600">
+                      (negative = before, positive = after)
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Example: -14 means 14 days before the milestone, +7 means 7 days after
+                  </p>
+                </div>
+              </>
+            )}
+
           </div>
 
           <DialogFooter>
@@ -256,7 +329,8 @@ export default function ScheduleItemDialog({
               type="submit"
               disabled={
                 submitting ||
-                (anchorType === 'SCHEDULE_ITEM' && milestones.length === 0)
+                (anchorType === 'SCHEDULE_ITEM' && milestones.length === 0) ||
+                (anchorType === 'PROJECT_MILESTONE' && projectMilestones.length === 0)
               }
             >
               {submitting ? 'Creating...' : 'Create Schedule Item'}

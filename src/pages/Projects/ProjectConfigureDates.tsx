@@ -17,7 +17,7 @@ import {
 import { TypeBadge, VersionBadge } from '@/components/ui/status-badge';
 import PropagationPreviewModal from './PropagationPreviewModal';
 import { EditProjectScheduleItemDialog } from '@/components/projects/EditProjectScheduleItemDialog';
-import type { ProjectDetail, ProjectActivityDetail, ScheduleItemWithDates } from '@shared/types';
+import type { ProjectDetail, ProjectActivityDetail, ScheduleItemWithDates, ProjectMilestone } from '@shared/types';
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
@@ -40,7 +40,8 @@ function addDays(dateString: string, offsetDays: number): string {
 
 function calculatePlannedDate(
   item: ScheduleItemWithDates,
-  resolvedDates: Map<number, string>
+  resolvedDates: Map<number, string>,
+  milestoneDates?: Map<number, string>
 ): string | null {
   if (item.overrideEnabled && item.overrideDate) {
     return item.overrideDate;
@@ -62,13 +63,27 @@ function calculatePlannedDate(
       }
       return addDays(refDate, item.offsetDays);
     }
+    case 'PROJECT_MILESTONE': {
+      if (item.projectMilestoneId === null) {
+        return null;
+      }
+      const msDate = milestoneDates?.get(item.projectMilestoneId);
+      if (!msDate) {
+        return null;
+      }
+      if (item.offsetDays === null) {
+        return msDate;
+      }
+      return addDays(msDate, item.offsetDays);
+    }
     default:
       return null;
   }
 }
 
 function calculateScheduleDates(
-  scheduleItems: ScheduleItemWithDates[]
+  scheduleItems: ScheduleItemWithDates[],
+  milestoneDates?: Map<number, string>
 ): ScheduleItemWithDates[] {
   const resolvedDates = new Map<number, string>();
   const results: ScheduleItemWithDates[] = [];
@@ -82,7 +97,7 @@ function calculateScheduleDates(
       if (!unprocessed.has(item.id)) {
         continue;
       }
-      const plannedDate = calculatePlannedDate(item, resolvedDates);
+      const plannedDate = calculatePlannedDate(item, resolvedDates, milestoneDates);
       if (plannedDate !== null) {
         resolvedDates.set(item.id, plannedDate);
         unprocessed.delete(item.id);
@@ -116,7 +131,19 @@ function calculateScheduleDates(
   });
 }
 
-function getCalculation(item: ScheduleItemWithDates, itemById: Map<number, ScheduleItemWithDates>) {
+function getCalculation(
+  item: ScheduleItemWithDates,
+  itemById: Map<number, ScheduleItemWithDates>,
+  milestoneById?: Map<number, ProjectMilestone>
+) {
+  if (item.anchorType === 'PROJECT_MILESTONE' && item.projectMilestoneId) {
+    const msName = milestoneById?.get(item.projectMilestoneId)?.name || `Milestone ${item.projectMilestoneId}`;
+    const offset = item.offsetDays ?? 0;
+    if (offset === 0) {
+      return msName;
+    }
+    return `${msName} ${offset > 0 ? '+' : ''}${offset}d`;
+  }
   if (item.kind === 'MILESTONE') {
     if (item.anchorType === 'FIXED_DATE') {
       return 'Fixed date';
@@ -144,6 +171,7 @@ export function ProjectConfigureDates() {
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [milestoneDates, setMilestoneDates] = useState<Record<number, string>>({});
+  const [projectMilestoneDates, setProjectMilestoneDates] = useState<Record<number, string>>({});
   const [previewItems, setPreviewItems] = useState<ScheduleItemWithDates[]>([]);
   const [saving, setSaving] = useState(false);
   const [propagating, setPropagating] = useState(false);
@@ -179,11 +207,24 @@ export function ProjectConfigureDates() {
   }, [projectDetail, activityId]);
 
   const milestones = useMemo(
-    () => activity?.scheduleItems.filter((item) => item.kind === 'MILESTONE') ?? [],
+    () => activity?.scheduleItems.filter((item) => item.kind === 'MILESTONE' && item.anchorType === 'FIXED_DATE') ?? [],
     [activity]
   );
 
-  const hasChanges = useMemo(
+  const projectMilestones = useMemo(
+    () => projectDetail?.milestones ?? [],
+    [projectDetail]
+  );
+
+  const milestoneById = useMemo(() => {
+    const map = new Map<number, ProjectMilestone>();
+    for (const ms of projectMilestones) {
+      map.set(ms.id, ms);
+    }
+    return map;
+  }, [projectMilestones]);
+
+  const hasActivityChanges = useMemo(
     () =>
       milestones.some(
         (item) => (milestoneDates[item.id] || '') !== (item.fixedDate || '')
@@ -191,20 +232,43 @@ export function ProjectConfigureDates() {
     [milestones, milestoneDates]
   );
 
+  const hasProjectMilestoneChanges = useMemo(
+    () =>
+      projectMilestones.some(
+        (ms) => (projectMilestoneDates[ms.id] || '') !== (ms.date || '')
+      ),
+    [projectMilestones, projectMilestoneDates]
+  );
+
+  const hasChanges = hasActivityChanges || hasProjectMilestoneChanges;
+
   useEffect(() => {
     if (!activity) {
       return;
     }
     const nextDates: Record<number, string> = {};
     activity.scheduleItems
-      .filter((item) => item.kind === 'MILESTONE')
+      .filter((item) => item.kind === 'MILESTONE' && item.anchorType === 'FIXED_DATE')
       .forEach((item) => {
         nextDates[item.id] = item.fixedDate || '';
       });
     setMilestoneDates(nextDates);
-    const calculated = calculateScheduleDates(activity.scheduleItems);
+
+    // Initialize project milestone dates
+    const nextProjectMilestoneDates: Record<number, string> = {};
+    for (const ms of projectDetail?.milestones ?? []) {
+      nextProjectMilestoneDates[ms.id] = ms.date || '';
+    }
+    setProjectMilestoneDates(nextProjectMilestoneDates);
+
+    // Build milestone dates map for preview calculation
+    const msDatesMap = new Map<number, string>();
+    for (const ms of projectDetail?.milestones ?? []) {
+      if (ms.date) msDatesMap.set(ms.id, ms.date);
+    }
+    const calculated = calculateScheduleDates(activity.scheduleItems, msDatesMap);
     setPreviewItems(calculated);
-  }, [activity]);
+  }, [activity, projectDetail?.milestones]);
 
   async function saveMilestoneDates(): Promise<boolean> {
     if (!activity) {
@@ -214,6 +278,26 @@ export function ProjectConfigureDates() {
       return true;
     }
     setSaving(true);
+
+    // Save project-level milestone dates
+    if (hasProjectMilestoneChanges) {
+      const pmUpdates = projectMilestones
+        .filter((ms) => (projectMilestoneDates[ms.id] || '') !== (ms.date || ''))
+        .map((ms) => ({
+          id: ms.id,
+          date: projectMilestoneDates[ms.id] === '' ? null : projectMilestoneDates[ms.id],
+        }));
+      if (pmUpdates.length > 0) {
+        const pmResult = await window.sqts.projectMilestones.bulkUpdate(pmUpdates);
+        if (!pmResult.success) {
+          setSaving(false);
+          toast({ title: 'Error', description: 'Failed to save project milestone dates.', variant: 'destructive' });
+          return false;
+        }
+      }
+    }
+
+    // Save activity-level fixed dates
     const updates = milestones
       .filter((item) => (milestoneDates[item.id] || '') !== (item.fixedDate || ''))
       .map((item) =>
@@ -238,13 +322,19 @@ export function ProjectConfigureDates() {
       return;
     }
     const updatedItems = activity.scheduleItems.map((item) => {
-      if (item.kind !== 'MILESTONE') {
+      if (item.kind !== 'MILESTONE' || item.anchorType !== 'FIXED_DATE') {
         return item;
       }
       const fixedDate = milestoneDates[item.id] || '';
       return { ...item, fixedDate: fixedDate === '' ? null : fixedDate };
     });
-    const calculated = calculateScheduleDates(updatedItems);
+    // Build project milestone dates map for preview
+    const msDatesMap = new Map<number, string>();
+    for (const ms of projectMilestones) {
+      const date = projectMilestoneDates[ms.id] || '';
+      if (date) msDatesMap.set(ms.id, date);
+    }
+    const calculated = calculateScheduleDates(updatedItems, msDatesMap);
     setPreviewItems(calculated);
   }
 
@@ -366,29 +456,28 @@ export function ProjectConfigureDates() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
+      {/* Project-Level Milestones */}
+      {projectMilestones.length > 0 && (
+        <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Project Milestone Dates</CardTitle>
+            <CardTitle>Project Milestones</CardTitle>
             <CardDescription>
-              Update milestone dates that anchor task calculations.
+              Set dates for project-level milestones. These dates are shared across all activities.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {milestones.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No milestones in this activity.</div>
-            ) : (
-              milestones.map((item) => (
-                <div key={item.id} className="flex items-center gap-3">
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {projectMilestones.map((ms) => (
+                <div key={ms.id} className="flex items-center gap-3">
                   <div className="flex-1">
-                    <div className="text-sm font-medium">{item.name}</div>
+                    <div className="text-sm font-medium">{ms.name}</div>
                     <Input
                       type="date"
-                      value={milestoneDates[item.id] || ''}
+                      value={projectMilestoneDates[ms.id] || ''}
                       onChange={(e) =>
-                        setMilestoneDates((prev) => ({
+                        setProjectMilestoneDates((prev) => ({
                           ...prev,
-                          [item.id]: e.target.value,
+                          [ms.id]: e.target.value,
                         }))
                       }
                     />
@@ -397,16 +486,57 @@ export function ProjectConfigureDates() {
                     variant="ghost"
                     size="sm"
                     onClick={() =>
-                      setMilestoneDates((prev) => ({ ...prev, [item.id]: '' }))
+                      setProjectMilestoneDates((prev) => ({ ...prev, [ms.id]: '' }))
                     }
                   >
                     Clear
                   </Button>
                 </div>
-              ))
-            )}
+              ))}
+            </div>
           </CardContent>
         </Card>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {milestones.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Activity Milestone Dates</CardTitle>
+            <CardDescription>
+              Update fixed-date milestones specific to this activity.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {milestones.map((item) => (
+              <div key={item.id} className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="text-sm font-medium">{item.name}</div>
+                  <Input
+                    type="date"
+                    value={milestoneDates[item.id] || ''}
+                    onChange={(e) =>
+                      setMilestoneDates((prev) => ({
+                        ...prev,
+                        [item.id]: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setMilestoneDates((prev) => ({ ...prev, [item.id]: '' }))
+                  }
+                >
+                  Clear
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        )}
 
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -446,7 +576,7 @@ export function ProjectConfigureDates() {
                           {formatDate(item.plannedDate)}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
-                          {getCalculation(item, itemById)}
+                          {getCalculation(item, itemById, milestoneById)}
                         </TableCell>
                         <TableCell>
                           <Button
@@ -491,6 +621,7 @@ export function ProjectConfigureDates() {
       <EditProjectScheduleItemDialog
         item={editingItem}
         allItems={activity?.scheduleItems || []}
+        projectMilestones={projectMilestones}
         open={editDialogOpen}
         onOpenChange={setEditDialogOpen}
         onSuccess={handleEditSuccess}
