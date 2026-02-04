@@ -71,6 +71,9 @@ import type {
   ExportOptions,
   ExportedData,
   ImportAnalysis,
+  ProjectMilestone,
+  CreateProjectMilestoneParams,
+  UpdateProjectMilestoneParams,
 } from '../shared/types.js';
 
 // Expose protected methods that allow the renderer process to use
@@ -181,6 +184,20 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('projects:preview-propagation', projectId),
     propagateChanges: (projectId: number): Promise<APIResponse<PropagationResult>> =>
       ipcRenderer.invoke('projects:propagate-changes', projectId),
+  },
+
+  // Project Milestones API
+  projectMilestones: {
+    list: (projectId: number): Promise<APIResponse<ProjectMilestone[]>> =>
+      ipcRenderer.invoke('project-milestones:list', projectId),
+    create: (params: CreateProjectMilestoneParams): Promise<APIResponse<ProjectMilestone>> =>
+      ipcRenderer.invoke('project-milestones:create', params),
+    update: (params: UpdateProjectMilestoneParams): Promise<APIResponse<ProjectMilestone>> =>
+      ipcRenderer.invoke('project-milestones:update', params),
+    delete: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('project-milestones:delete', id),
+    bulkUpdate: (milestones: UpdateProjectMilestoneParams[]): Promise<APIResponse<ProjectMilestone[]>> =>
+      ipcRenderer.invoke('project-milestones:bulk-update', milestones),
   },
 
   // Project Activities API
@@ -397,6 +414,13 @@ export interface SQTSAPI {
     delete: (id: number) => Promise<APIResponse<void>>;
     previewPropagation: (projectId: number) => Promise<APIResponse<PropagationPreview>>;
     propagateChanges: (projectId: number) => Promise<APIResponse<PropagationResult>>;
+  };
+  projectMilestones: {
+    list: (projectId: number) => Promise<APIResponse<ProjectMilestone[]>>;
+    create: (params: CreateProjectMilestoneParams) => Promise<APIResponse<ProjectMilestone>>;
+    update: (params: UpdateProjectMilestoneParams) => Promise<APIResponse<ProjectMilestone>>;
+    delete: (id: number) => Promise<APIResponse<void>>;
+    bulkUpdate: (milestones: UpdateProjectMilestoneParams[]) => Promise<APIResponse<ProjectMilestone[]>>;
   };
   projectActivities: {
     list: (projectId: number) => Promise<APIResponse<ProjectActivity[]>>;

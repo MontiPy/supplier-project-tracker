@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Plus, RefreshCcw, Share2, Users } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCcw, Share2, Trash2, Users } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -25,7 +27,7 @@ import { Breadcrumb } from '@/components/ui/breadcrumb';
 import { VersionBadge, CategoryBadge, RankBadge } from '@/components/ui/status-badge';
 import AddActivityDialog from './AddActivityDialog';
 import PropagationPreviewModal from './PropagationPreviewModal';
-import type { ProjectDetail, ProjectActivityDetail, SupplierProject, AuditEvent } from '../../../shared/types';
+import type { ProjectDetail, ProjectActivityDetail, ProjectMilestone, SupplierProject, AuditEvent } from '../../../shared/types';
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,6 +44,11 @@ export default function ProjectDetailPage() {
   const [applyingPropagation, setApplyingPropagation] = useState(false);
   const [supplierProjects, setSupplierProjects] = useState<SupplierProject[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [addMilestoneOpen, setAddMilestoneOpen] = useState(false);
+  const [newMilestoneName, setNewMilestoneName] = useState('');
+  const [newMilestoneDate, setNewMilestoneDate] = useState('');
+  const [addingMilestone, setAddingMilestone] = useState(false);
+  const [deletingMilestoneId, setDeletingMilestoneId] = useState<number | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -149,6 +156,43 @@ export default function ProjectDetailPage() {
     toast({ title: 'Success', description: `Applied ${updated} updates. Skipped ${skipped} items.`, variant: 'success' });
   }
 
+  async function handleAddMilestone(e: React.FormEvent) {
+    e.preventDefault();
+    if (!id || !newMilestoneName.trim()) return;
+
+    setAddingMilestone(true);
+    const response = await window.sqts.projectMilestones.create({
+      projectId: Number(id),
+      name: newMilestoneName.trim(),
+      date: newMilestoneDate || null,
+      sortOrder: (projectDetail?.milestones?.length ?? 0) + 1,
+    });
+    setAddingMilestone(false);
+
+    if (response.success) {
+      setAddMilestoneOpen(false);
+      setNewMilestoneName('');
+      setNewMilestoneDate('');
+      loadProjectDetail();
+    } else {
+      toast({ title: 'Error', description: response.error || 'Failed to add milestone', variant: 'destructive' });
+    }
+  }
+
+  async function handleDeleteMilestone(milestoneId: number) {
+    if (!confirm('Delete this milestone? Schedule items anchored to it will need to be updated.')) return;
+
+    setDeletingMilestoneId(milestoneId);
+    const response = await window.sqts.projectMilestones.delete(milestoneId);
+    setDeletingMilestoneId(null);
+
+    if (response.success) {
+      loadProjectDetail();
+    } else {
+      toast({ title: 'Error', description: response.error || 'Failed to delete milestone', variant: 'destructive' });
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-8">
@@ -228,6 +272,9 @@ export default function ProjectDetailPage() {
       <Tabs defaultValue="activities">
         <TabsList className="mb-6">
           <TabsTrigger value="activities">Activities</TabsTrigger>
+          <TabsTrigger value="milestones">
+            Milestones ({projectDetail.milestones?.length ?? 0})
+          </TabsTrigger>
           <TabsTrigger value="suppliers">
             Suppliers Applied ({supplierProjects.length})
           </TabsTrigger>
@@ -264,6 +311,72 @@ export default function ProjectDetailPage() {
               ))
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="milestones">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Project Milestones</CardTitle>
+                  <CardDescription>
+                    Define milestones like PA2, PA3, NMR3, etc. Activity schedule items can be anchored to these milestones.
+                  </CardDescription>
+                </div>
+                <Button onClick={() => setAddMilestoneOpen(true)} size="sm">
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Milestone
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(!projectDetail.milestones || projectDetail.milestones.length === 0) ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No milestones defined yet.</p>
+                  <p className="text-sm mt-1">Add milestones to define key dates that activities can reference.</p>
+                  <Button onClick={() => setAddMilestoneOpen(true)} className="mt-4" size="sm">
+                    <Plus className="h-4 w-4 mr-1" />
+                    Add First Milestone
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {projectDetail.milestones.map((ms) => (
+                        <TableRow key={ms.id}>
+                          <TableCell className="font-medium">{ms.name}</TableCell>
+                          <TableCell>
+                            {ms.date ? formatDate(ms.date) : <span className="text-muted-foreground">Not set</span>}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDeleteMilestone(ms.id)}
+                              disabled={deletingMilestoneId === ms.id}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-3">
+                Set milestone dates from the Configure Dates page of each activity.
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="suppliers">
@@ -400,6 +513,48 @@ export default function ProjectDetailPage() {
           loadSupplierProjects();
         }}
       />
+
+      <Dialog open={addMilestoneOpen} onOpenChange={setAddMilestoneOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Project Milestone</DialogTitle>
+            <DialogDescription>
+              Define a milestone like PA2, PA3, NMR3, etc. You can set the date now or later.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAddMilestone}>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="milestoneName">Name *</Label>
+                <Input
+                  id="milestoneName"
+                  value={newMilestoneName}
+                  onChange={(e) => setNewMilestoneName(e.target.value)}
+                  placeholder="e.g., PA2, PA3, NMR3"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="milestoneDate">Date (optional)</Label>
+                <Input
+                  id="milestoneDate"
+                  type="date"
+                  value={newMilestoneDate}
+                  onChange={(e) => setNewMilestoneDate(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAddMilestoneOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={addingMilestone || !newMilestoneName.trim()}>
+                {addingMilestone ? 'Adding...' : 'Add Milestone'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

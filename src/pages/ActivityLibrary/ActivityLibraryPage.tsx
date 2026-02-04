@@ -48,6 +48,7 @@ const anchorTypes: AnchorType[] = [
   'FIXED_DATE',
   'SCHEDULE_ITEM',
   'COMPLETION',
+  'PROJECT_MILESTONE',
 ];
 
 const applicabilitySubjects: { value: ApplicabilitySubject; label: string }[] = [
@@ -538,6 +539,7 @@ export function ActivityLibraryPage() {
       anchorType,
       anchorRefId: item.anchorRefId || undefined,
       offsetDays: item.offsetDays ?? undefined,
+      projectMilestoneName: item.projectMilestoneName || undefined,
     });
     setItemDialogOpen(true);
   }
@@ -554,6 +556,8 @@ export function ActivityLibraryPage() {
     const anchorType = itemFormData.kind === 'TASK' ? 'SCHEDULE_ITEM' : itemFormData.anchorType;
     const anchorRefId =
       itemFormData.kind === 'TASK' ? itemFormData.anchorRefId || undefined : itemFormData.anchorRefId;
+    const projectMilestoneName =
+      anchorType === 'PROJECT_MILESTONE' ? itemFormData.projectMilestoneName || undefined : undefined;
 
     if (editingItem) {
       const params: UpdateActivityTemplateScheduleItemParams = {
@@ -563,6 +567,7 @@ export function ActivityLibraryPage() {
         anchorType,
         anchorRefId,
         offsetDays: itemFormData.offsetDays ?? undefined,
+        projectMilestoneName,
       };
       const response = await window.sqts.activityTemplates.scheduleItems.update(params);
       if (response.success) {
@@ -575,6 +580,7 @@ export function ActivityLibraryPage() {
         ...itemFormData,
         anchorType,
         anchorRefId,
+        projectMilestoneName,
       });
       if (response.success) {
         await loadTemplateDetail(selectedId);
@@ -601,6 +607,9 @@ export function ActivityLibraryPage() {
   }
 
   function getAnchorRefLabel(item: ActivityTemplateScheduleItem) {
+    if (item.anchorType === 'PROJECT_MILESTONE') {
+      return item.projectMilestoneName || '-';
+    }
     if (item.anchorType !== 'SCHEDULE_ITEM' || !item.anchorRefId) {
       return '-';
     }
@@ -620,6 +629,15 @@ export function ActivityLibraryPage() {
   }
 
   function getNotes(item: ActivityTemplateScheduleItem) {
+    if (item.anchorType === 'PROJECT_MILESTONE' && item.projectMilestoneName) {
+      if (!item.offsetDays) {
+        return `On ${item.projectMilestoneName} date`;
+      }
+      if (item.offsetDays < 0) {
+        return `${Math.abs(item.offsetDays)} days before ${item.projectMilestoneName}`;
+      }
+      return `${item.offsetDays} days after ${item.projectMilestoneName}`;
+    }
     if (item.kind === 'MILESTONE') {
       return 'Set at project level';
     }
@@ -1399,6 +1417,24 @@ export function ActivityLibraryPage() {
                       Create a milestone before adding tasks.
                     </p>
                   )}
+                </div>
+              )}
+              {itemFormData.anchorType === 'PROJECT_MILESTONE' && itemFormData.kind !== 'TASK' && (
+                <div className="grid gap-2">
+                  <Label htmlFor="projectMilestoneName">Project Milestone Name *</Label>
+                  <Input
+                    id="projectMilestoneName"
+                    value={itemFormData.projectMilestoneName || ''}
+                    onChange={(e) =>
+                      setItemFormData({ ...itemFormData, projectMilestoneName: e.target.value })
+                    }
+                    placeholder="e.g., PA2, PA3, NMR3"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This name will be matched to a project milestone when the template is applied.
+                    If no matching milestone exists, one will be created automatically.
+                  </p>
                 </div>
               )}
               {(itemFormData.kind === 'TASK' || itemFormData.anchorType !== 'FIXED_DATE') && (

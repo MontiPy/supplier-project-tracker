@@ -8,6 +8,7 @@ import type {
   ExportOptions,
   ExportedSupplier,
   ExportedProject,
+  ExportedProjectMilestone,
   ExportedActivityTemplate,
   ExportedSettings,
   ExportedScheduleItem,
@@ -100,6 +101,7 @@ function exportActivityTemplates(ids: number[]): ExportedActivityTemplate[] {
         anchorType,
         offsetDays,
         anchorRef,
+        projectMilestoneName: item.project_milestone_name || null,
       };
     });
 
@@ -177,9 +179,19 @@ function exportProjects(ids: number[]): ExportedProject[] {
           anchorRef = anchorItem?.name || null;
         }
 
+        // Find project milestone name if applicable
+        let projectMilestoneName: string | null = null;
+        if (item.project_milestone_id) {
+          const milestone = queryOne(
+            'SELECT name FROM project_milestones WHERE id = ?',
+            [item.project_milestone_id]
+          );
+          projectMilestoneName = milestone?.name || null;
+        }
+
         // For relative anchors, ensure offsetDays is a number (default to 0 if null)
         const anchorType = item.anchor_type as AnchorType;
-        const offsetDays = (anchorType === 'SCHEDULE_ITEM' || anchorType === 'COMPLETION')
+        const offsetDays = (anchorType === 'SCHEDULE_ITEM' || anchorType === 'COMPLETION' || anchorType === 'PROJECT_MILESTONE')
           ? (item.offset_days ?? 0)
           : item.offset_days;
 
@@ -194,6 +206,7 @@ function exportProjects(ids: number[]): ExportedProject[] {
           sortOrder: item.sort_order,
           overrideDate: item.override_date,
           overrideEnabled: Boolean(item.override_enabled),
+          projectMilestoneName,
         };
       });
 
@@ -218,10 +231,23 @@ function exportProjects(ids: number[]): ExportedProject[] {
       };
     });
 
+    // Get project milestones
+    const milestoneRows = query(
+      'SELECT * FROM project_milestones WHERE project_id = ? ORDER BY sort_order',
+      [id]
+    );
+
+    const milestones: ExportedProjectMilestone[] = milestoneRows.map((ms: any) => ({
+      name: ms.name,
+      date: ms.date,
+      sortOrder: ms.sort_order,
+    }));
+
     projects.push({
       id: project.id,
       name: project.name,
       version: project.version,
+      milestones: milestones.length > 0 ? milestones : undefined,
       activities,
     });
   }

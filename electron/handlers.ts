@@ -87,6 +87,9 @@ import type {
   ApplyToAllProjectsResult,
   TemplateSyncStatus,
   ProjectSyncStatus,
+  ProjectMilestone,
+  CreateProjectMilestoneParams,
+  UpdateProjectMilestoneParams,
 } from '../shared/types.js';
 
 // ============================================================================
@@ -885,17 +888,20 @@ function handleActivityTemplateScheduleItemsCreate(
   params: CreateActivityTemplateScheduleItemParams
 ): APIResponse<ActivityTemplateScheduleItem> {
   try {
-    const { activityTemplateId, kind, name, anchorType, anchorRefId, offsetDays } = params;
+    const { activityTemplateId, kind, name, anchorType, anchorRefId, offsetDays, projectMilestoneName } = params;
 
     if (anchorType === 'SCHEDULE_ITEM' && !anchorRefId) {
       return createErrorResponse('Anchor reference is required for SCHEDULE_ITEM');
     }
+    if (anchorType === 'PROJECT_MILESTONE' && !projectMilestoneName) {
+      return createErrorResponse('Project milestone name is required for PROJECT_MILESTONE');
+    }
 
     const result = run(
       `INSERT INTO activity_template_schedule_items
-       (activity_template_id, kind, name, anchor_type, anchor_ref_id, offset_days)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [activityTemplateId, kind, name, anchorType, anchorRefId || null, offsetDays || null]
+       (activity_template_id, kind, name, anchor_type, anchor_ref_id, offset_days, project_milestone_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [activityTemplateId, kind, name, anchorType, anchorRefId || null, offsetDays || null, projectMilestoneName || null]
     );
 
     const item = queryOne('SELECT * FROM activity_template_schedule_items WHERE id = ?', [
@@ -917,10 +923,13 @@ function handleActivityTemplateScheduleItemsUpdate(
   params: UpdateActivityTemplateScheduleItemParams
 ): APIResponse<ActivityTemplateScheduleItem> {
   try {
-    const { id, kind, name, anchorType, anchorRefId, offsetDays } = params;
+    const { id, kind, name, anchorType, anchorRefId, offsetDays, projectMilestoneName } = params;
 
     if (anchorType === 'SCHEDULE_ITEM' && anchorRefId === undefined) {
       return createErrorResponse('Anchor reference is required for SCHEDULE_ITEM');
+    }
+    if (anchorType === 'PROJECT_MILESTONE' && projectMilestoneName === undefined) {
+      return createErrorResponse('Project milestone name is required for PROJECT_MILESTONE');
     }
 
     const updates: string[] = [];
@@ -945,6 +954,10 @@ function handleActivityTemplateScheduleItemsUpdate(
     if (offsetDays !== undefined) {
       updates.push('offset_days = ?');
       values.push(offsetDays);
+    }
+    if (projectMilestoneName !== undefined) {
+      updates.push('project_milestone_name = ?');
+      values.push(projectMilestoneName);
     }
 
     if (updates.length === 0) {
@@ -1560,13 +1573,32 @@ function handleProjectActivitiesSyncFromTemplate(
 
     const newlyCreatedTemplateIds = new Set<number>();
 
+    // Helper to resolve template milestone name to project milestone ID
+    function resolveProjectMilestoneId(milestoneName: string | null): number | null {
+      if (!milestoneName) return null;
+      const milestone = queryOne(
+        'SELECT id FROM project_milestones WHERE project_id = ? AND name = ?',
+        [activity.project_id, milestoneName]
+      );
+      if (milestone) return milestone.id;
+      // Auto-create the project milestone if it doesn't exist
+      const result = run(
+        'INSERT INTO project_milestones (project_id, name) VALUES (?, ?)',
+        [activity.project_id, milestoneName]
+      );
+      return result.lastInsertRowid as number;
+    }
+
     templateItemsRaw.forEach((templateItemRaw: any) => {
       const existing = projectItemByTemplateId.get(templateItemRaw.id);
       if (!existing) {
+        const milestoneId = templateItemRaw.anchor_type === 'PROJECT_MILESTONE'
+          ? resolveProjectMilestoneId(templateItemRaw.project_milestone_name)
+          : null;
         const insertResult = run(
           `INSERT INTO project_schedule_items
-           (project_activity_id, template_item_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (project_activity_id, template_item_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, sort_order, project_milestone_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             projectActivityId,
             templateItemRaw.id,
@@ -1577,6 +1609,7 @@ function handleProjectActivitiesSyncFromTemplate(
             templateItemRaw.offset_days,
             null,
             remainingProjectItemsRaw.length,
+            milestoneId,
           ]
         );
         projectItemIdByTemplateId.set(templateItemRaw.id, insertResult.lastInsertRowid);
@@ -1592,15 +1625,19 @@ function handleProjectActivitiesSyncFromTemplate(
         if (!projectItemId) {
           continue;
         }
+        const milestoneId = templateItemRaw.anchor_type === 'PROJECT_MILESTONE'
+          ? resolveProjectMilestoneId(templateItemRaw.project_milestone_name)
+          : null;
         run(
           `UPDATE project_schedule_items
-           SET name = ?, kind = ?, anchor_type = ?, offset_days = ?
+           SET name = ?, kind = ?, anchor_type = ?, offset_days = ?, project_milestone_id = ?
            WHERE id = ?`,
           [
             templateItemRaw.name,
             templateItemRaw.kind,
             templateItemRaw.anchor_type,
             templateItemRaw.offset_days,
+            milestoneId,
             projectItemId,
           ]
         );
@@ -2001,6 +2038,190 @@ function handleScheduleItemsGet(_event: any, id: number): APIResponse<ProjectSch
   }
 }
 
+// ============================================================================
+// Project Milestone Handlers
+// ============================================================================
+
+function handleProjectMilestonesList(
+  _event: any,
+  projectId: number
+): APIResponse<ProjectMilestone[]> {
+  try {
+    const milestones = query(
+      'SELECT * FROM project_milestones WHERE project_id = ? ORDER BY sort_order',
+      [projectId]
+    );
+    return createSuccessResponse(toCamelCase<ProjectMilestone[]>(milestones));
+  } catch (error) {
+    console.error('Error listing project milestones:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectMilestonesCreate(
+  _event: any,
+  params: CreateProjectMilestoneParams
+): APIResponse<ProjectMilestone> {
+  try {
+    const { projectId, name, date, sortOrder } = params;
+
+    if (!name || !name.trim()) {
+      return createErrorResponse('Milestone name is required');
+    }
+
+    // Determine sort order if not provided
+    let finalSortOrder = sortOrder;
+    if (finalSortOrder === undefined) {
+      const maxOrder = queryOne<{ max: number | null }>(
+        'SELECT MAX(sort_order) as max FROM project_milestones WHERE project_id = ?',
+        [projectId]
+      );
+      finalSortOrder = (maxOrder?.max ?? -1) + 1;
+    }
+
+    const result = run(
+      'INSERT INTO project_milestones (project_id, name, date, sort_order) VALUES (?, ?, ?, ?)',
+      [projectId, name.trim(), date || null, finalSortOrder]
+    );
+
+    const milestone = queryOne('SELECT * FROM project_milestones WHERE id = ?', [
+      result.lastInsertRowid,
+    ]);
+
+    touchProject(projectId);
+    return createSuccessResponse(toCamelCase<ProjectMilestone>(milestone));
+  } catch (error) {
+    console.error('Error creating project milestone:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectMilestonesUpdate(
+  _event: any,
+  params: UpdateProjectMilestoneParams
+): APIResponse<ProjectMilestone> {
+  try {
+    const { id, name, date, sortOrder } = params;
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(name.trim());
+    }
+    if (date !== undefined) {
+      updates.push('date = ?');
+      values.push(date);
+    }
+    if (sortOrder !== undefined) {
+      updates.push('sort_order = ?');
+      values.push(sortOrder);
+    }
+
+    if (updates.length === 0) {
+      return createErrorResponse('No fields to update');
+    }
+
+    values.push(id);
+    run(`UPDATE project_milestones SET ${updates.join(', ')} WHERE id = ?`, values);
+
+    const milestone = queryOne('SELECT * FROM project_milestones WHERE id = ?', [id]);
+    if (!milestone) {
+      return createErrorResponse(`Milestone not found: ${id}`);
+    }
+
+    touchProject(milestone.project_id);
+    return createSuccessResponse(toCamelCase<ProjectMilestone>(milestone));
+  } catch (error) {
+    console.error('Error updating project milestone:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectMilestonesDelete(
+  _event: any,
+  id: number
+): APIResponse<void> {
+  try {
+    // Check if any schedule items reference this milestone
+    const refs = query(
+      'SELECT id, name FROM project_schedule_items WHERE project_milestone_id = ?',
+      [id]
+    );
+    if (refs.length > 0) {
+      const names = refs.map((r: any) => r.name).join(', ');
+      return createErrorResponse(
+        `Cannot delete milestone: referenced by schedule items: ${names}`
+      );
+    }
+
+    const milestone = queryOne('SELECT project_id FROM project_milestones WHERE id = ?', [id]);
+    run('DELETE FROM project_milestones WHERE id = ?', [id]);
+
+    if (milestone) {
+      touchProject(milestone.project_id);
+    }
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting project milestone:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectMilestonesBulkUpdate(
+  _event: any,
+  milestones: UpdateProjectMilestoneParams[]
+): APIResponse<ProjectMilestone[]> {
+  try {
+    const results: ProjectMilestone[] = [];
+    let projectId: number | null = null;
+
+    for (const params of milestones) {
+      const { id, name, date, sortOrder } = params;
+      const updates: string[] = [];
+      const values: any[] = [];
+
+      if (name !== undefined) {
+        updates.push('name = ?');
+        values.push(name.trim());
+      }
+      if (date !== undefined) {
+        updates.push('date = ?');
+        values.push(date);
+      }
+      if (sortOrder !== undefined) {
+        updates.push('sort_order = ?');
+        values.push(sortOrder);
+      }
+
+      if (updates.length > 0) {
+        values.push(id);
+        run(`UPDATE project_milestones SET ${updates.join(', ')} WHERE id = ?`, values);
+      }
+
+      const milestone = queryOne('SELECT * FROM project_milestones WHERE id = ?', [id]);
+      if (milestone) {
+        results.push(toCamelCase<ProjectMilestone>(milestone));
+        projectId = milestone.project_id;
+      }
+    }
+
+    if (projectId !== null) {
+      touchProject(projectId);
+    }
+
+    return createSuccessResponse(results);
+  } catch (error) {
+    console.error('Error bulk updating project milestones:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Schedule Items Handlers
+// ============================================================================
+
 function handleScheduleItemsCreate(
   _event: any,
   params: CreateScheduleItemParams
@@ -2018,6 +2239,7 @@ function handleScheduleItemsCreate(
       templateItemId,
       overrideDate,
       overrideEnabled,
+      projectMilestoneId,
     } = params;
 
     // Validate anchor type requirements
@@ -2026,6 +2248,9 @@ function handleScheduleItemsCreate(
     }
     if (anchorType === 'SCHEDULE_ITEM' && !anchorRefId) {
       return createErrorResponse('Anchor reference ID is required for SCHEDULE_ITEM anchor type');
+    }
+    if (anchorType === 'PROJECT_MILESTONE' && !projectMilestoneId) {
+      return createErrorResponse('Project milestone ID is required for PROJECT_MILESTONE anchor type');
     }
 
     // Determine sort order if not provided
@@ -2040,8 +2265,8 @@ function handleScheduleItemsCreate(
 
     const result = run(
       `INSERT INTO project_schedule_items
-       (project_activity_id, template_item_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, override_date, override_enabled, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (project_activity_id, template_item_id, kind, name, anchor_type, anchor_ref_id, offset_days, fixed_date, override_date, override_enabled, sort_order, project_milestone_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         projectActivityId,
         templateItemId || null,
@@ -2054,6 +2279,7 @@ function handleScheduleItemsCreate(
         overrideDate || null,
         overrideEnabled ? 1 : 0,
         finalSortOrder,
+        projectMilestoneId || null,
       ]
     );
 
@@ -2101,7 +2327,7 @@ function handleScheduleItemsUpdate(
   params: UpdateScheduleItemParams
 ): APIResponse<ProjectScheduleItem> {
   try {
-    const { id, name, anchorType, anchorRefId, offsetDays, fixedDate, sortOrder, overrideDate, overrideEnabled } =
+    const { id, name, anchorType, anchorRefId, offsetDays, fixedDate, sortOrder, overrideDate, overrideEnabled, projectMilestoneId } =
       params;
 
     const updates: string[] = [];
@@ -2121,6 +2347,9 @@ function handleScheduleItemsUpdate(
       }
       if (anchorType === 'SCHEDULE_ITEM' && anchorRefId === undefined) {
         return createErrorResponse('Anchor reference ID is required for SCHEDULE_ITEM anchor type');
+      }
+      if (anchorType === 'PROJECT_MILESTONE' && projectMilestoneId === undefined) {
+        return createErrorResponse('Project milestone ID is required for PROJECT_MILESTONE anchor type');
       }
     }
     if (anchorRefId !== undefined) {
@@ -2146,6 +2375,10 @@ function handleScheduleItemsUpdate(
     if (sortOrder !== undefined) {
       updates.push('sort_order = ?');
       values.push(sortOrder);
+    }
+    if (projectMilestoneId !== undefined) {
+      updates.push('project_milestone_id = ?');
+      values.push(projectMilestoneId);
     }
 
     if (updates.length === 0) {
@@ -3030,6 +3263,19 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
       return createErrorResponse(`Project not found: ${id}`);
     }
 
+    // Get project milestones
+    const milestonesRaw = query(
+      'SELECT * FROM project_milestones WHERE project_id = ? ORDER BY sort_order',
+      [id]
+    );
+    const milestones = toCamelCase<ProjectMilestone[]>(milestonesRaw);
+
+    // Build milestone dates map for scheduler
+    const milestoneDates = new Map<number, string | null>();
+    for (const ms of milestones) {
+      milestoneDates.set(ms.id, ms.date);
+    }
+
     // Get all activities for this project
     const activities = query(
       `SELECT pa.*, at.name as activity_template_name, at.category as activity_template_category
@@ -3050,7 +3296,9 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 
       const itemsWithDates = calculateScheduleDates(
         toCamelCase<ProjectScheduleItem[]>(scheduleItems),
-        useBusinessDays
+        useBusinessDays,
+        undefined,
+        milestoneDates
       );
 
       return {
@@ -3063,6 +3311,7 @@ function handleProjectsGetDetail(_event: any, id: number): APIResponse<ProjectDe
 
     const result: ProjectDetail = {
       ...toCamelCase<Project>(project),
+      milestones,
       activities: activitiesWithDetails
     };
 
@@ -3929,6 +4178,13 @@ export function registerHandlers(): void {
   ipcMain.handle('projects:update', handleProjectsUpdate);
   ipcMain.handle('projects:delete', handleProjectsDelete);
   ipcMain.handle('projects:get-detail', handleProjectsGetDetail);
+
+  // Project Milestones
+  ipcMain.handle('project-milestones:list', handleProjectMilestonesList);
+  ipcMain.handle('project-milestones:create', handleProjectMilestonesCreate);
+  ipcMain.handle('project-milestones:update', handleProjectMilestonesUpdate);
+  ipcMain.handle('project-milestones:delete', handleProjectMilestonesDelete);
+  ipcMain.handle('project-milestones:bulk-update', handleProjectMilestonesBulkUpdate);
 
   // Project Activities
   ipcMain.handle('project-activities:list', handleProjectActivitiesList);
