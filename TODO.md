@@ -1,0 +1,2 @@
+- Need to restructure projects so that dates can be assigned to milestones like PA2 or NMR3 and then activities are linked those dates.
+- Create a tabular input for dates that have project milestones (PA2, PA3, PA4, PA5, etc.) across columns or rows and then the projects are the other axis. Then i can update and save the table quickly.

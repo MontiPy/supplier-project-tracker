@@ -48,6 +48,11 @@ import type {
   PropagationResult,
   AuditEvent,
   AuditEventQuery,
+  BatchCreateProjectActivitiesParams,
+  BatchOperationResult,
+  ApplyToAllProjectsParams,
+  ApplyToAllProjectsResult,
+  TemplateSyncStatus,
   APIResponse,
   // Phase 5: Settings, Dashboard, Reports
   FileDialogResult,
@@ -117,6 +122,12 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('activity-templates:delete', id),
     duplicate: (id: number): Promise<APIResponse<ActivityTemplate>> =>
       ipcRenderer.invoke('activity-templates:duplicate', id),
+    applyToAllProjects: (
+      params: ApplyToAllProjectsParams
+    ): Promise<APIResponse<ApplyToAllProjectsResult>> =>
+      ipcRenderer.invoke('activity-templates:apply-to-all-projects', params),
+    getSyncStatus: (activityTemplateId: number): Promise<APIResponse<TemplateSyncStatus>> =>
+      ipcRenderer.invoke('activity-templates:get-sync-status', activityTemplateId),
     scheduleItems: {
       list: (activityTemplateId: number): Promise<APIResponse<ActivityTemplateScheduleItem[]>> =>
         ipcRenderer.invoke('activity-template-schedule-items:list', activityTemplateId),
@@ -188,6 +199,10 @@ contextBridge.exposeInMainWorld('sqts', {
       params: SyncProjectActivityFromTemplateParams
     ): Promise<APIResponse<ProjectActivity>> =>
       ipcRenderer.invoke('project-activities:sync-from-template', params),
+    batchCreate: (
+      params: BatchCreateProjectActivitiesParams
+    ): Promise<APIResponse<BatchOperationResult>> =>
+      ipcRenderer.invoke('project-activities:batch-create', params),
   },
 
   // Schedule Items API
@@ -343,6 +358,10 @@ export interface SQTSAPI {
     update: (params: UpdateActivityTemplateParams) => Promise<APIResponse<ActivityTemplate>>;
     delete: (id: number) => Promise<APIResponse<void>>;
     duplicate: (id: number) => Promise<APIResponse<ActivityTemplate>>;
+    applyToAllProjects: (
+      params: ApplyToAllProjectsParams
+    ) => Promise<APIResponse<ApplyToAllProjectsResult>>;
+    getSyncStatus: (activityTemplateId: number) => Promise<APIResponse<TemplateSyncStatus>>;
     scheduleItems: {
       list: (activityTemplateId: number) => Promise<APIResponse<ActivityTemplateScheduleItem[]>>;
       create: (
@@ -388,6 +407,9 @@ export interface SQTSAPI {
     syncFromTemplate: (
       params: SyncProjectActivityFromTemplateParams
     ) => Promise<APIResponse<ProjectActivity>>;
+    batchCreate: (
+      params: BatchCreateProjectActivitiesParams
+    ) => Promise<APIResponse<BatchOperationResult>>;
   };
   scheduleItems: {
     list: (projectActivityId: number) => Promise<APIResponse<ScheduleItemWithDates[]>>;

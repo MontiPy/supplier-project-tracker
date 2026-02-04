@@ -81,6 +81,12 @@ import type {
   ActivityTemplateWithCounts,
   SupplierProjectWithProgress,
   FileDialogResult,
+  BatchCreateProjectActivitiesParams,
+  BatchOperationResult,
+  ApplyToAllProjectsParams,
+  ApplyToAllProjectsResult,
+  TemplateSyncStatus,
+  ProjectSyncStatus,
 } from '../shared/types.js';
 
 // ============================================================================
@@ -896,6 +902,9 @@ function handleActivityTemplateScheduleItemsCreate(
       result.lastInsertRowid,
     ]);
 
+    // Bump template version and optionally auto-sync
+    bumpTemplateVersion(activityTemplateId);
+
     return createSuccessResponse(toCamelCase<ActivityTemplateScheduleItem>(item));
   } catch (error) {
     console.error('Error creating activity template schedule item:', error);
@@ -946,6 +955,12 @@ function handleActivityTemplateScheduleItemsUpdate(
     run(`UPDATE activity_template_schedule_items SET ${updates.join(', ')} WHERE id = ?`, values);
 
     const item = queryOne('SELECT * FROM activity_template_schedule_items WHERE id = ?', [id]);
+
+    // Bump template version and optionally auto-sync
+    if (item) {
+      bumpTemplateVersion((item as any).activity_template_id);
+    }
+
     return createSuccessResponse(toCamelCase<ActivityTemplateScheduleItem>(item));
   } catch (error) {
     console.error('Error updating activity template schedule item:', error);
@@ -955,11 +970,24 @@ function handleActivityTemplateScheduleItemsUpdate(
 
 function handleActivityTemplateScheduleItemsDelete(_event: any, id: number): APIResponse<void> {
   try {
+    // Get activity template ID before deleting
+    const item = queryOne<{ activity_template_id: number }>(
+      'SELECT activity_template_id FROM activity_template_schedule_items WHERE id = ?',
+      [id]
+    );
+
+    if (!item) {
+      return createErrorResponse(`Activity template schedule item not found: ${id}`);
+    }
+
     const result = run('DELETE FROM activity_template_schedule_items WHERE id = ?', [id]);
 
     if (result.changes === 0) {
       return createErrorResponse(`Activity template schedule item not found: ${id}`);
     }
+
+    // Bump template version and optionally auto-sync
+    bumpTemplateVersion(item.activity_template_id);
 
     return createSuccessResponse(undefined);
   } catch (error) {
@@ -1614,6 +1642,320 @@ function handleProjectActivitiesSyncFromTemplate(
   } catch (error) {
     console.error('Error syncing project activity from template:', error);
     return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
+// Batch Activity Operations
+// ============================================================================
+
+function handleProjectActivitiesBatchCreate(
+  _event: any,
+  params: BatchCreateProjectActivitiesParams
+): APIResponse<BatchOperationResult> {
+  try {
+    const { projectIds, activityTemplateIds, autoSync = true } = params;
+    let created = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const affectedProjectIds = new Set<number>();
+
+    for (const projectId of projectIds) {
+      for (const templateId of activityTemplateIds) {
+        try {
+          // Check if activity already exists
+          const existing = queryOne(
+            'SELECT id FROM project_activities WHERE project_id = ? AND activity_template_id = ?',
+            [projectId, templateId]
+          );
+
+          if (existing) {
+            skipped++;
+            // Still ensure supplier instances for skipped projects
+            affectedProjectIds.add(projectId);
+            continue;
+          }
+
+          // Get current template version
+          const templateVersion = queryOne<{ version_number: number }>(
+            'SELECT version_number FROM activity_template_versions WHERE activity_template_id = ?',
+            [templateId]
+          );
+          const version = templateVersion?.version_number ?? 1;
+
+          // Get max sort order
+          const maxSort = queryOne<{ max_sort: number }>(
+            'SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM project_activities WHERE project_id = ?',
+            [projectId]
+          );
+
+          // Create activity
+          const result = run(
+            `INSERT INTO project_activities (project_id, activity_template_id, sort_order, template_version)
+             VALUES (?, ?, ?, ?)`,
+            [projectId, templateId, (maxSort?.max_sort ?? -1) + 1, version]
+          );
+
+          // If autoSync, apply template structure
+          if (autoSync) {
+            const activityId = result.lastInsertRowid;
+            handleProjectActivitiesSyncFromTemplate(_event, {
+              projectActivityId: activityId,
+              applyTemplateOffsets: false,
+            });
+          }
+
+          created++;
+          touchProject(projectId);
+          affectedProjectIds.add(projectId);
+        } catch (error) {
+          errors.push(`Project ${projectId}, Template ${templateId}: ${String(error)}`);
+        }
+      }
+    }
+
+    // Ensure supplier instances are created for affected projects
+    console.log(`[Batch Create] Ensuring supplier instances for ${affectedProjectIds.size} projects`);
+    for (const projectId of affectedProjectIds) {
+      ensureSupplierActivitiesForProject(projectId);
+    }
+
+    // Save database
+    saveDatabase();
+
+    return createSuccessResponse({ created, skipped, errors });
+  } catch (error) {
+    console.error('Error batch creating project activities:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateApplyToAllProjects(
+  _event: any,
+  params: ApplyToAllProjectsParams
+): APIResponse<ApplyToAllProjectsResult> {
+  try {
+    const { activityTemplateId, autoSync = true } = params;
+
+    // Get all projects
+    const allProjects = query<{ id: number; name: string }>('SELECT id, name FROM projects');
+    const projectIds = allProjects.map((p) => p.id);
+
+    // Use batch create handler
+    const result = handleProjectActivitiesBatchCreate(_event, {
+      projectIds,
+      activityTemplateIds: [activityTemplateId],
+      autoSync,
+    });
+
+    if (result.success && result.data) {
+      return createSuccessResponse({
+        created: result.data.created,
+        skipped: result.data.skipped,
+        projectNames: allProjects.map((p) => p.name),
+        errors: result.data.errors,
+      });
+    }
+
+    return createErrorResponse(result.error || 'Failed to apply to all projects');
+  } catch (error) {
+    console.error('Error applying activity template to all projects:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleActivityTemplateGetSyncStatus(
+  _event: any,
+  activityTemplateId: number
+): APIResponse<TemplateSyncStatus> {
+  try {
+    // Get current template version
+    const template = queryOne<{ version_number: number }>(
+      'SELECT version_number FROM activity_template_versions WHERE activity_template_id = ?',
+      [activityTemplateId]
+    );
+    const templateVersion = template?.version_number ?? 1;
+
+    // Get template item count
+    const templateItems = query(
+      'SELECT id FROM activity_template_schedule_items WHERE activity_template_id = ?',
+      [activityTemplateId]
+    );
+    const templateItemCount = templateItems.length;
+
+    // Get all projects using this template
+    const projects = query<any>(
+      `SELECT pa.id as project_activity_id, pa.project_id, pa.template_version,
+              p.name as project_name
+       FROM project_activities pa
+       JOIN projects p ON p.id = pa.project_id
+       WHERE pa.activity_template_id = ?`,
+      [activityTemplateId]
+    );
+
+    const result: ProjectSyncStatus[] = projects.map((proj: any) => {
+      // Count schedule items for this activity
+      const projectItems = query(
+        'SELECT id FROM project_schedule_items WHERE project_activity_id = ?',
+        [proj.project_activity_id]
+      );
+
+      return {
+        projectId: proj.project_id,
+        projectName: proj.project_name,
+        projectActivityId: proj.project_activity_id,
+        appliedVersion: proj.template_version ?? 1,
+        isOutOfSync:
+          (proj.template_version ?? 1) < templateVersion ||
+          projectItems.length !== templateItemCount,
+        templateItemCount,
+        projectItemCount: projectItems.length,
+      };
+    });
+
+    return createSuccessResponse({
+      templateVersion,
+      projects: result,
+    });
+  } catch (error) {
+    console.error('Error getting template sync status:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// Helper function to bump template version and optionally auto-sync
+function bumpTemplateVersion(activityTemplateId: number): void {
+  try {
+    // Increment version number
+    run(
+      `UPDATE activity_template_versions
+       SET version_number = version_number + 1, updated_at = datetime('now')
+       WHERE activity_template_id = ?`,
+      [activityTemplateId]
+    );
+
+    console.log(`[Auto-Sync] Bumped template ${activityTemplateId} version`);
+
+    // Check if auto-propagation is enabled
+    const autoPropSetting = getSettingValue('auto_propagate_template_changes');
+    console.log(`[Auto-Sync] Setting auto_propagate_template_changes = ${autoPropSetting}`);
+
+    if (autoPropSetting === 'true') {
+      console.log(`[Auto-Sync] Auto-syncing projects for template ${activityTemplateId}`);
+      autoSyncProjectsForTemplate(activityTemplateId);
+    } else {
+      console.log(`[Auto-Sync] Auto-propagation is disabled. Enable in Settings to auto-sync.`);
+    }
+  } catch (error) {
+    console.error('[Auto-Sync] Error in bumpTemplateVersion:', error);
+  }
+}
+
+// Helper function to ensure supplier instances exist for new project activities
+function ensureSupplierActivitiesForProject(projectId: number): void {
+  try {
+    console.log(`[Auto-Sync] Checking supplier projects for project ${projectId}`);
+
+    // Get all supplier projects using this project
+    const supplierProjects = query<{ id: number; supplier_id: number }>(
+      'SELECT id, supplier_id FROM supplier_projects WHERE project_id = ?',
+      [projectId]
+    );
+
+    console.log(`[Auto-Sync] Found ${supplierProjects.length} supplier projects for project ${projectId}`);
+
+    if (supplierProjects.length === 0) {
+      console.log(`[Auto-Sync] No suppliers using project ${projectId}, skipping`);
+      return;
+    }
+
+    console.log(`[Auto-Sync] Ensuring supplier activities for ${supplierProjects.length} supplier projects`);
+
+    for (const sp of supplierProjects) {
+      console.log(`[Auto-Sync] Re-evaluating applicability for supplier project ${sp.id}`);
+      // Re-evaluate applicability for this supplier project
+      // This will create missing activity instances
+      evaluateApplicabilityForSupplierProject(sp.id);
+    }
+
+    console.log(`[Auto-Sync] Completed creating missing supplier activity instances`);
+  } catch (error) {
+    console.error('[Auto-Sync] Error ensuring supplier activities:', error);
+  }
+}
+
+// Helper function to auto-sync all projects using a template
+function autoSyncProjectsForTemplate(activityTemplateId: number): void {
+  try {
+    const projectActivities = query<{ id: number; project_id: number }>(
+      'SELECT id, project_id FROM project_activities WHERE activity_template_id = ?',
+      [activityTemplateId]
+    );
+
+    console.log(`[Auto-Sync] Found ${projectActivities.length} projects using template ${activityTemplateId}`);
+
+    if (projectActivities.length === 0) {
+      console.log('[Auto-Sync] No projects to sync');
+      return;
+    }
+
+    // Get current template version
+    const template = queryOne<{ version_number: number }>(
+      'SELECT version_number FROM activity_template_versions WHERE activity_template_id = ?',
+      [activityTemplateId]
+    );
+    const currentVersion = template?.version_number ?? 1;
+
+    let syncedCount = 0;
+    const affectedProjectIds = new Set<number>();
+
+    for (const pa of projectActivities) {
+      // Sync without applying offsets (preserve existing dates)
+      const syncResult = handleProjectActivitiesSyncFromTemplate(null as any, {
+        projectActivityId: pa.id,
+        applyTemplateOffsets: false,
+      });
+
+      if (syncResult.success) {
+        // Update template version on project activity
+        run('UPDATE project_activities SET template_version = ? WHERE id = ?', [
+          currentVersion,
+          pa.id,
+        ]);
+        touchProject(pa.project_id);
+        affectedProjectIds.add(pa.project_id);
+        syncedCount++;
+      } else {
+        console.error(`[Auto-Sync] Failed to sync project activity ${pa.id}:`, syncResult.error);
+      }
+    }
+
+    console.log(`[Auto-Sync] Successfully synced ${syncedCount}/${projectActivities.length} projects`);
+
+    // Ensure supplier instances exist for all affected projects
+    console.log('[Auto-Sync] Ensuring supplier activity instances exist...');
+    for (const projectId of affectedProjectIds) {
+      ensureSupplierActivitiesForProject(projectId);
+    }
+
+    // Save database after all syncs
+    saveDatabase();
+
+    // Check if we should also propagate to suppliers
+    const autoPropSuppliers = getSettingValue('auto_propagate_to_suppliers');
+    if (autoPropSuppliers === 'true') {
+      console.log('[Auto-Sync] Propagating to suppliers...');
+      // Use the imported propagateChanges from the top of the file
+      for (const projectId of affectedProjectIds) {
+        const result = propagateChanges(projectId, false);
+        if (result.errors && result.errors.length > 0) {
+          console.error(`[Auto-Sync] Errors propagating project ${projectId}:`, result.errors);
+        }
+      }
+      console.log(`[Auto-Sync] Propagated to suppliers for ${affectedProjectIds.size} projects`);
+    }
+  } catch (error) {
+    console.error('[Auto-Sync] Error auto-syncing projects for template:', error);
   }
 }
 
@@ -2804,6 +3146,8 @@ function handleSettingsGetAll(): APIResponse<AppSettings> {
       propagationSkipComplete: settingsMap['propagation_skip_complete'] === 'true',
       propagationSkipLocked: settingsMap['propagation_skip_locked'] === 'true',
       propagationSkipOverridden: settingsMap['propagation_skip_overridden'] === 'true',
+      autoPropagateTemplateChanges: settingsMap['auto_propagate_template_changes'] === 'true',
+      autoPropagateToSuppliers: settingsMap['auto_propagate_to_suppliers'] === 'true',
       dateFormat: (settingsMap['date_format'] || 'MM/DD/YYYY') as AppSettings['dateFormat'],
       useBusinessDays: settingsMap['use_business_days'] === 'true',
     };
@@ -3596,6 +3940,12 @@ export function registerHandlers(): void {
     'project-activities:sync-from-template',
     handleProjectActivitiesSyncFromTemplate
   );
+  ipcMain.handle('project-activities:batch-create', handleProjectActivitiesBatchCreate);
+  ipcMain.handle(
+    'activity-templates:apply-to-all-projects',
+    handleActivityTemplateApplyToAllProjects
+  );
+  ipcMain.handle('activity-templates:get-sync-status', handleActivityTemplateGetSyncStatus);
 
   // Schedule Items
   ipcMain.handle('schedule-items:list', handleScheduleItemsList);

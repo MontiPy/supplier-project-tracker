@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Pencil, Trash2, Copy, Archive, Save, Info } from 'lucide-react';
+import { Plus, Pencil, Trash2, Copy, Archive, Save, Info, Share2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ApplyToProjectsDialog } from '@/components/activities/ApplyToProjectsDialog';
+import { SyncStatusBadge } from '@/components/activities/SyncStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -150,6 +152,10 @@ export function ActivityLibraryPage() {
     comparator: 'IN',
     value: '',
   });
+
+  // Batch operations state
+  const [applyDialogOpen, setApplyDialogOpen] = useState(false);
+  const [syncStatusKey, setSyncStatusKey] = useState(0);
 
   const milestones = items.filter((item) => item.kind === 'MILESTONE');
   const itemById = new Map(items.map((item) => [item.id, item] as const));
@@ -306,6 +312,52 @@ export function ActivityLibraryPage() {
       await loadTemplates();
       selectTemplate(response.data.id);
     }
+  }
+
+  async function handleApplyToAllProjects() {
+    if (!selectedId || !template) return;
+
+    if (items.length === 0) {
+      toast({
+        title: 'No schedule items',
+        description: 'Add at least one milestone or task before applying to projects',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const confirm = window.confirm(
+      `Apply "${template.name}" to all projects?\n\nThis will add this activity to any project that doesn't already have it.`
+    );
+
+    if (!confirm) return;
+
+    const response = await window.sqts.activityTemplates.applyToAllProjects({
+      activityTemplateId: selectedId,
+      autoSync: true,
+    });
+
+    if (response.success && response.data) {
+      toast({
+        title: 'Success',
+        description: `Applied to ${response.data.created} project${
+          response.data.created !== 1 ? 's' : ''
+        }. ${response.data.skipped > 0 ? `Skipped ${response.data.skipped} (already exists).` : ''}`,
+      });
+      // Refresh sync status
+      setSyncStatusKey((k) => k + 1);
+    } else {
+      toast({
+        title: 'Error',
+        description: response.error || 'Failed to apply to projects',
+        variant: 'destructive',
+      });
+    }
+  }
+
+  function handleApplySuccess() {
+    // Refresh sync status badge
+    setSyncStatusKey((k) => k + 1);
   }
 
   function handleValidate() {
@@ -690,6 +742,10 @@ export function ActivityLibraryPage() {
                 <div className="flex items-center gap-2 mb-1">
                   <h2 className="text-2xl font-bold">{template.name}</h2>
                   {template.category && <CategoryBadge category={template.category} />}
+                  <SyncStatusBadge
+                    activityTemplateId={template.id}
+                    key={syncStatusKey}
+                  />
                 </div>
                 <p className="text-muted-foreground">{template.description || 'No description'}</p>
                 {template.updatedAt && (
@@ -699,6 +755,24 @@ export function ActivityLibraryPage() {
                 )}
               </div>
               <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setApplyDialogOpen(true)}
+                  disabled={items.length === 0}
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Apply to Projects...
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleApplyToAllProjects}
+                  disabled={items.length === 0}
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Apply to All Projects
+                </Button>
                 <Button variant="outline" size="sm" onClick={handleDuplicate}>
                   <Copy className="mr-2 h-4 w-4" />
                   Duplicate
@@ -1379,6 +1453,17 @@ export function ActivityLibraryPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Apply to Projects Dialog */}
+      {template && (
+        <ApplyToProjectsDialog
+          open={applyDialogOpen}
+          onOpenChange={setApplyDialogOpen}
+          activityTemplateId={template.id}
+          activityTemplateName={template.name}
+          onSuccess={handleApplySuccess}
+        />
+      )}
     </div>
   );
 }

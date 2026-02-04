@@ -47,6 +47,7 @@ export interface ProjectActivity {
   projectId: number;
   activityTemplateId: number;
   sortOrder: number;
+  templateVersion?: number;
   createdAt: string;
 }
 
@@ -508,6 +509,8 @@ export interface AppSettings {
   propagationSkipComplete: boolean;
   propagationSkipLocked: boolean;
   propagationSkipOverridden: boolean;
+  autoPropagateTemplateChanges: boolean;
+  autoPropagateToSuppliers: boolean;
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD';
   useBusinessDays: boolean;
 }
@@ -805,4 +808,54 @@ export interface ExportOptions {
   includeScheduleInstances: boolean;
   includeAttachments: boolean;
   includeSettings: boolean;
+}
+
+// ============================================================================
+// Batch Activity Operations
+// ============================================================================
+
+export interface BatchCreateProjectActivitiesParams {
+  projectIds: number[];
+  activityTemplateIds: number[];
+  autoSync?: boolean;
+}
+
+export interface BatchOperationResult {
+  created: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface ApplyToAllProjectsParams {
+  activityTemplateId: number;
+  autoSync?: boolean;
+}
+
+export interface ApplyToAllProjectsResult {
+  created: number;
+  skipped: number;
+  projectNames: string[];
+  errors: string[];
+}
+
+export interface ActivityTemplateVersion {
+  id: number;
+  activityTemplateId: number;
+  versionNumber: number;
+  updatedAt: string;
+}
+
+export interface ProjectSyncStatus {
+  projectId: number;
+  projectName: string;
+  projectActivityId: number;
+  appliedVersion: number;
+  isOutOfSync: boolean;
+  templateItemCount: number;
+  projectItemCount: number;
+}
+
+export interface TemplateSyncStatus {
+  templateVersion: number;
+  projects: ProjectSyncStatus[];
 }

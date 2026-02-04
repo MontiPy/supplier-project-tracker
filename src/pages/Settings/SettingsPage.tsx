@@ -21,6 +21,8 @@ const defaultSettings: AppSettings = {
   propagationSkipComplete: true,
   propagationSkipLocked: true,
   propagationSkipOverridden: true,
+  autoPropagateTemplateChanges: false,
+  autoPropagateToSuppliers: false,
   dateFormat: 'MM/DD/YYYY',
   useBusinessDays: false,
 };
@@ -370,6 +372,51 @@ export function SettingsPage() {
                   onCheckedChange={(checked: boolean) =>
                     updatePropagationSetting('propagationSkipOverridden', checked)
                   }
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Auto-Propagation Settings */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Auto-Propagation</CardTitle>
+            <CardDescription>
+              Automatically sync changes from activity templates to projects and suppliers
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="auto-propagate-templates">Auto-Sync Template Changes</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically update projects when activity template schedule items change
+                  </p>
+                </div>
+                <Switch
+                  id="auto-propagate-templates"
+                  checked={settings.autoPropagateTemplateChanges}
+                  onCheckedChange={(checked: boolean) =>
+                    updatePropagationSetting('autoPropagateTemplateChanges', checked)
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="auto-propagate-suppliers">Auto-Propagate to Suppliers</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically propagate project changes to suppliers (only when auto-sync is enabled)
+                  </p>
+                </div>
+                <Switch
+                  id="auto-propagate-suppliers"
+                  checked={settings.autoPropagateToSuppliers}
+                  onCheckedChange={(checked: boolean) =>
+                    updatePropagationSetting('autoPropagateToSuppliers', checked)
+                  }
+                  disabled={!settings.autoPropagateTemplateChanges}
                 />
               </div>
             </div>
