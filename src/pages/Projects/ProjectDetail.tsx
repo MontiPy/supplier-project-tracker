@@ -27,7 +27,7 @@ import { Breadcrumb } from '@/components/ui/breadcrumb';
 import { VersionBadge, CategoryBadge, RankBadge } from '@/components/ui/status-badge';
 import AddActivityDialog from './AddActivityDialog';
 import PropagationPreviewModal from './PropagationPreviewModal';
-import type { ProjectDetail, ProjectActivityDetail, ProjectMilestone, SupplierProject, AuditEvent } from '../../../shared/types';
+import type { ProjectDetail, ProjectActivityDetail, SupplierProject, AuditEvent } from '../../../shared/types';
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -164,7 +164,7 @@ export default function ProjectDetailPage() {
     const response = await window.sqts.projectMilestones.create({
       projectId: Number(id),
       name: newMilestoneName.trim(),
-      date: newMilestoneDate || null,
+      date: newMilestoneDate || undefined,
       sortOrder: (projectDetail?.milestones?.length ?? 0) + 1,
     });
     setAddingMilestone(false);
