@@ -903,3 +903,62 @@ export interface TemplateSyncStatus {
   templateVersion: number;
   projects: ProjectSyncStatus[];
 }
+
+// ============================================================================
+// Project Templates
+// ============================================================================
+
+export interface ProjectTemplate {
+  id: number;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectTemplateMilestone {
+  id: number;
+  templateId: number;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface ProjectTemplateActivity {
+  id: number;
+  templateId: number;
+  activityTemplateId: number;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface ProjectTemplateDetail extends ProjectTemplate {
+  milestones: ProjectTemplateMilestone[];
+  activities: Array<ProjectTemplateActivity & { activityTemplateName: string }>;
+}
+
+export interface CreateProjectTemplateParams {
+  name: string;
+  description?: string;
+  milestones?: Array<{ name: string; sortOrder: number }>;
+  activityTemplateIds?: number[];
+}
+
+export interface UpdateProjectTemplateParams {
+  id: number;
+  name?: string;
+  description?: string;
+}
+
+export interface ApplyTemplateToProjectParams {
+  templateId: number;
+  projectId: number;
+  mergeStrategy: 'REPLACE_ALL' | 'MERGE_ADD';
+}
+
+export interface ApplyTemplateResult {
+  milestonesCreated: number;
+  activitiesCreated: number;
+  scheduleItemsLinked: number;
+  errors: string[];
+}

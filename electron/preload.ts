@@ -74,6 +74,14 @@ import type {
   ProjectMilestone,
   CreateProjectMilestoneParams,
   UpdateProjectMilestoneParams,
+  ProjectTemplate,
+  ProjectTemplateDetail,
+  ProjectTemplateMilestone,
+  ProjectTemplateActivity,
+  CreateProjectTemplateParams,
+  UpdateProjectTemplateParams,
+  ApplyTemplateToProjectParams,
+  ApplyTemplateResult,
 } from '../shared/types.js';
 
 // Expose protected methods that allow the renderer process to use
@@ -198,6 +206,30 @@ contextBridge.exposeInMainWorld('sqts', {
       ipcRenderer.invoke('project-milestones:delete', id),
     bulkUpdate: (milestones: UpdateProjectMilestoneParams[]): Promise<APIResponse<ProjectMilestone[]>> =>
       ipcRenderer.invoke('project-milestones:bulk-update', milestones),
+  },
+
+  // Project Templates API
+  projectTemplates: {
+    list: (): Promise<APIResponse<ProjectTemplate[]>> =>
+      ipcRenderer.invoke('project-templates:list'),
+    get: (id: number): Promise<APIResponse<ProjectTemplateDetail>> =>
+      ipcRenderer.invoke('project-templates:get', id),
+    create: (params: CreateProjectTemplateParams): Promise<APIResponse<ProjectTemplate>> =>
+      ipcRenderer.invoke('project-templates:create', params),
+    update: (params: UpdateProjectTemplateParams): Promise<APIResponse<ProjectTemplate>> =>
+      ipcRenderer.invoke('project-templates:update', params),
+    delete: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('project-templates:delete', id),
+    addMilestone: (params: { templateId: number; name: string; sortOrder: number }): Promise<APIResponse<ProjectTemplateMilestone>> =>
+      ipcRenderer.invoke('project-templates:add-milestone', params),
+    deleteMilestone: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('project-templates:delete-milestone', id),
+    addActivity: (params: { templateId: number; activityTemplateId: number }): Promise<APIResponse<ProjectTemplateActivity>> =>
+      ipcRenderer.invoke('project-templates:add-activity', params),
+    deleteActivity: (id: number): Promise<APIResponse<void>> =>
+      ipcRenderer.invoke('project-templates:delete-activity', id),
+    applyToProject: (params: ApplyTemplateToProjectParams): Promise<APIResponse<ApplyTemplateResult>> =>
+      ipcRenderer.invoke('project-templates:apply-to-project', params),
   },
 
   // Project Activities API
@@ -421,6 +453,18 @@ export interface SQTSAPI {
     update: (params: UpdateProjectMilestoneParams) => Promise<APIResponse<ProjectMilestone>>;
     delete: (id: number) => Promise<APIResponse<void>>;
     bulkUpdate: (milestones: UpdateProjectMilestoneParams[]) => Promise<APIResponse<ProjectMilestone[]>>;
+  };
+  projectTemplates: {
+    list: () => Promise<APIResponse<ProjectTemplate[]>>;
+    get: (id: number) => Promise<APIResponse<ProjectTemplateDetail>>;
+    create: (params: CreateProjectTemplateParams) => Promise<APIResponse<ProjectTemplate>>;
+    update: (params: UpdateProjectTemplateParams) => Promise<APIResponse<ProjectTemplate>>;
+    delete: (id: number) => Promise<APIResponse<void>>;
+    addMilestone: (params: { templateId: number; name: string; sortOrder: number }) => Promise<APIResponse<ProjectTemplateMilestone>>;
+    deleteMilestone: (id: number) => Promise<APIResponse<void>>;
+    addActivity: (params: { templateId: number; activityTemplateId: number }) => Promise<APIResponse<ProjectTemplateActivity>>;
+    deleteActivity: (id: number) => Promise<APIResponse<void>>;
+    applyToProject: (params: ApplyTemplateToProjectParams) => Promise<APIResponse<ApplyTemplateResult>>;
   };
   projectActivities: {
     list: (projectId: number) => Promise<APIResponse<ProjectActivity[]>>;

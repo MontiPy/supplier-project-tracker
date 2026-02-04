@@ -90,6 +90,14 @@ import type {
   ProjectMilestone,
   CreateProjectMilestoneParams,
   UpdateProjectMilestoneParams,
+  ProjectTemplate,
+  ProjectTemplateDetail,
+  ProjectTemplateMilestone,
+  ProjectTemplateActivity,
+  CreateProjectTemplateParams,
+  UpdateProjectTemplateParams,
+  ApplyTemplateToProjectParams,
+  ApplyTemplateResult,
 } from '../shared/types.js';
 
 // ============================================================================
@@ -2219,6 +2227,406 @@ function handleProjectMilestonesBulkUpdate(
 }
 
 // ============================================================================
+// Project Templates Handlers
+// ============================================================================
+
+function handleProjectTemplatesList(): APIResponse<ProjectTemplate[]> {
+  try {
+    const templates = query('SELECT * FROM project_templates ORDER BY name');
+    return createSuccessResponse(toCamelCase<ProjectTemplate[]>(templates));
+  } catch (error) {
+    console.error('Error listing project templates:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplatesGet(_event: any, id: number): APIResponse<ProjectTemplateDetail> {
+  try {
+    const template = queryOne('SELECT * FROM project_templates WHERE id = ?', [id]);
+    if (!template) {
+      return createErrorResponse('Template not found');
+    }
+
+    const milestones = query(
+      'SELECT * FROM project_template_milestones WHERE template_id = ? ORDER BY sort_order',
+      [id]
+    );
+
+    const activities = query(
+      `SELECT pta.*, at.name as activity_template_name
+       FROM project_template_activities pta
+       JOIN activity_templates at ON pta.activity_template_id = at.id
+       WHERE pta.template_id = ?
+       ORDER BY pta.sort_order`,
+      [id]
+    );
+
+    return createSuccessResponse({
+      ...toCamelCase<ProjectTemplate>(template),
+      milestones: toCamelCase<ProjectTemplateMilestone[]>(milestones),
+      activities: toCamelCase<Array<ProjectTemplateActivity & { activityTemplateName: string }>>(activities),
+    });
+  } catch (error) {
+    console.error('Error getting project template:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplatesCreate(_event: any, params: CreateProjectTemplateParams): APIResponse<ProjectTemplate> {
+  try {
+    const { name, description, milestones, activityTemplateIds } = params;
+
+    // Check uniqueness
+    const existing = queryOne('SELECT id FROM project_templates WHERE name = ?', [name]);
+    if (existing) {
+      return createErrorResponse('Template with this name already exists');
+    }
+
+    const result = run(
+      'INSERT INTO project_templates (name, description, updated_at) VALUES (?, ?, datetime(\'now\'))',
+      [name, description || null]
+    );
+
+    const templateId = result.lastInsertRowid;
+
+    // Insert milestones
+    if (milestones && milestones.length > 0) {
+      for (const milestone of milestones) {
+        run(
+          'INSERT INTO project_template_milestones (template_id, name, sort_order) VALUES (?, ?, ?)',
+          [templateId, milestone.name, milestone.sortOrder]
+        );
+      }
+    }
+
+    // Insert activities
+    if (activityTemplateIds && activityTemplateIds.length > 0) {
+      for (let i = 0; i < activityTemplateIds.length; i++) {
+        run(
+          'INSERT INTO project_template_activities (template_id, activity_template_id, sort_order) VALUES (?, ?, ?)',
+          [templateId, activityTemplateIds[i], i]
+        );
+      }
+    }
+
+    const template = queryOne('SELECT * FROM project_templates WHERE id = ?', [templateId]);
+    return createSuccessResponse(toCamelCase<ProjectTemplate>(template));
+  } catch (error) {
+    console.error('Error creating project template:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplatesUpdate(_event: any, params: UpdateProjectTemplateParams): APIResponse<ProjectTemplate> {
+  try {
+    const { id, name, description } = params;
+
+    // Verify template exists
+    const existingTemplate = queryOne('SELECT id FROM project_templates WHERE id = ?', [id]);
+    if (!existingTemplate) {
+      return createErrorResponse('Template not found');
+    }
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (name !== undefined) {
+      // Check uniqueness
+      const duplicate = queryOne('SELECT id FROM project_templates WHERE name = ? AND id != ?', [name, id]);
+      if (duplicate) {
+        return createErrorResponse('Template with this name already exists');
+      }
+      updates.push('name = ?');
+      values.push(name);
+    }
+    if (description !== undefined) {
+      updates.push('description = ?');
+      values.push(description);
+    }
+
+    if (updates.length === 0) {
+      return createErrorResponse('No fields to update');
+    }
+
+    updates.push('updated_at = datetime(\'now\')');
+    values.push(id);
+    run(`UPDATE project_templates SET ${updates.join(', ')} WHERE id = ?`, values);
+
+    const template = queryOne('SELECT * FROM project_templates WHERE id = ?', [id]);
+    return createSuccessResponse(toCamelCase<ProjectTemplate>(template));
+  } catch (error) {
+    console.error('Error updating project template:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplatesDelete(_event: any, id: number): APIResponse<void> {
+  try {
+    const result = run('DELETE FROM project_templates WHERE id = ?', [id]);
+    if (result.changes === 0) {
+      return createErrorResponse('Template not found');
+    }
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting project template:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplateAddMilestone(
+  _event: any,
+  params: { templateId: number; name: string; sortOrder: number }
+): APIResponse<ProjectTemplateMilestone> {
+  try {
+    const templateExists = queryOne('SELECT id FROM project_templates WHERE id = ?', [params.templateId]);
+    if (!templateExists) {
+      return createErrorResponse('Template not found');
+    }
+
+    const result = run(
+      'INSERT INTO project_template_milestones (template_id, name, sort_order) VALUES (?, ?, ?)',
+      [params.templateId, params.name, params.sortOrder]
+    );
+
+    const milestone = queryOne('SELECT * FROM project_template_milestones WHERE id = ?', [result.lastInsertRowid]);
+    run('UPDATE project_templates SET updated_at = datetime(\'now\') WHERE id = ?', [params.templateId]);
+
+    return createSuccessResponse(toCamelCase<ProjectTemplateMilestone>(milestone));
+  } catch (error) {
+    console.error('Error adding milestone to template:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplateDeleteMilestone(_event: any, id: number): APIResponse<void> {
+  try {
+    const milestone = queryOne<{ template_id: number }>('SELECT template_id FROM project_template_milestones WHERE id = ?', [id]);
+    if (!milestone) {
+      return createErrorResponse('Template milestone not found');
+    }
+    run('DELETE FROM project_template_milestones WHERE id = ?', [id]);
+    run('UPDATE project_templates SET updated_at = datetime(\'now\') WHERE id = ?', [milestone.template_id]);
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting template milestone:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplateAddActivity(
+  _event: any,
+  params: { templateId: number; activityTemplateId: number }
+): APIResponse<ProjectTemplateActivity> {
+  try {
+    const templateExists = queryOne('SELECT id FROM project_templates WHERE id = ?', [params.templateId]);
+    if (!templateExists) {
+      return createErrorResponse('Template not found');
+    }
+
+    const activityExists = queryOne('SELECT id FROM activity_templates WHERE id = ?', [params.activityTemplateId]);
+    if (!activityExists) {
+      return createErrorResponse('Activity template not found');
+    }
+
+    // Get max sort_order
+    const maxSort = queryOne<{ max_sort: number | null }>(
+      'SELECT MAX(sort_order) as max_sort FROM project_template_activities WHERE template_id = ?',
+      [params.templateId]
+    );
+    const sortOrder = (maxSort?.max_sort ?? -1) + 1;
+
+    const result = run(
+      'INSERT INTO project_template_activities (template_id, activity_template_id, sort_order) VALUES (?, ?, ?)',
+      [params.templateId, params.activityTemplateId, sortOrder]
+    );
+
+    const activity = queryOne('SELECT * FROM project_template_activities WHERE id = ?', [result.lastInsertRowid]);
+    run('UPDATE project_templates SET updated_at = datetime(\'now\') WHERE id = ?', [params.templateId]);
+
+    return createSuccessResponse(toCamelCase<ProjectTemplateActivity>(activity));
+  } catch (error) {
+    if (String(error).includes('UNIQUE constraint')) {
+      return createErrorResponse('Activity already exists in this template');
+    }
+    console.error('Error adding activity to template:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplateDeleteActivity(_event: any, id: number): APIResponse<void> {
+  try {
+    const activity = queryOne<{ template_id: number }>('SELECT template_id FROM project_template_activities WHERE id = ?', [id]);
+    if (!activity) {
+      return createErrorResponse('Template activity not found');
+    }
+    run('DELETE FROM project_template_activities WHERE id = ?', [id]);
+    run('UPDATE project_templates SET updated_at = datetime(\'now\') WHERE id = ?', [activity.template_id]);
+    return createSuccessResponse(undefined);
+  } catch (error) {
+    console.error('Error deleting template activity:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+function handleProjectTemplateApplyToProject(
+  _event: any,
+  params: ApplyTemplateToProjectParams
+): APIResponse<ApplyTemplateResult> {
+  try {
+    const { templateId, projectId, mergeStrategy } = params;
+
+    // Verify template exists
+    const template = queryOne('SELECT * FROM project_templates WHERE id = ?', [templateId]);
+    if (!template) {
+      return createErrorResponse('Template not found');
+    }
+
+    // Verify project exists
+    const project = queryOne('SELECT * FROM projects WHERE id = ?', [projectId]);
+    if (!project) {
+      return createErrorResponse('Project not found');
+    }
+
+    let milestonesCreated = 0;
+    let activitiesCreated = 0;
+    let scheduleItemsLinked = 0;
+    const errors: string[] = [];
+
+    // REPLACE_ALL: delete existing milestones and activities
+    if (mergeStrategy === 'REPLACE_ALL') {
+      run('DELETE FROM project_milestones WHERE project_id = ?', [projectId]);
+      run('DELETE FROM project_activities WHERE project_id = ?', [projectId]);
+    }
+
+    // Apply milestones
+    const templateMilestones = query<{ name: string; sort_order: number }>(
+      'SELECT name, sort_order FROM project_template_milestones WHERE template_id = ? ORDER BY sort_order',
+      [templateId]
+    );
+
+    const milestoneNameToId = new Map<string, number>();
+
+    for (const tm of templateMilestones) {
+      if (mergeStrategy === 'MERGE_ADD') {
+        // Check if milestone with this name already exists
+        const existing = queryOne<{ id: number }>(
+          'SELECT id FROM project_milestones WHERE project_id = ? AND name = ?',
+          [projectId, tm.name]
+        );
+        if (existing) {
+          milestoneNameToId.set(tm.name, existing.id);
+          continue; // Skip if exists
+        }
+      }
+
+      const result = run(
+        'INSERT INTO project_milestones (project_id, name, sort_order) VALUES (?, ?, ?)',
+        [projectId, tm.name, tm.sort_order]
+      );
+      milestonesCreated++;
+      milestoneNameToId.set(tm.name, result.lastInsertRowid as number);
+    }
+
+    // Apply activities
+    const templateActivities = query<{ activity_template_id: number; sort_order: number }>(
+      'SELECT activity_template_id, sort_order FROM project_template_activities WHERE template_id = ? ORDER BY sort_order',
+      [templateId]
+    );
+
+    for (const ta of templateActivities) {
+      if (mergeStrategy === 'MERGE_ADD') {
+        // Check if activity already exists in project
+        const existing = queryOne(
+          'SELECT id FROM project_activities WHERE project_id = ? AND activity_template_id = ?',
+          [projectId, ta.activity_template_id]
+        );
+        if (existing) {
+          continue; // Skip if exists
+        }
+      }
+
+      const activityResult = run(
+        'INSERT INTO project_activities (project_id, activity_template_id, sort_order) VALUES (?, ?, ?)',
+        [projectId, ta.activity_template_id, ta.sort_order]
+      );
+      activitiesCreated++;
+
+      const projectActivityId = activityResult.lastInsertRowid as number;
+
+      // Sync schedule items from activity template
+      const templateItems = query<{
+        id: number;
+        kind: string;
+        name: string;
+        anchor_type: string;
+        anchor_ref_id: number | null;
+        offset_days: number | null;
+        project_milestone_name: string | null;
+      }>(
+        'SELECT * FROM activity_template_schedule_items WHERE activity_template_id = ?',
+        [ta.activity_template_id]
+      );
+
+      // Map template item IDs to project item IDs for anchor refs
+      const templateItemIdToProjectItemId = new Map<number, number>();
+
+      for (const item of templateItems) {
+        let projectMilestoneId: number | null = null;
+
+        // Auto-link to project milestone if anchor type is PROJECT_MILESTONE
+        if (item.anchor_type === 'PROJECT_MILESTONE' && item.project_milestone_name) {
+          const milestoneId = milestoneNameToId.get(item.project_milestone_name);
+          if (milestoneId) {
+            projectMilestoneId = milestoneId;
+            scheduleItemsLinked++;
+          } else {
+            errors.push(`Milestone "${item.project_milestone_name}" not found for item "${item.name}"`);
+          }
+        }
+
+        // Map anchor_ref_id from template to project
+        let anchorRefId = item.anchor_ref_id;
+        if (anchorRefId && item.anchor_type === 'SCHEDULE_ITEM') {
+          anchorRefId = templateItemIdToProjectItemId.get(anchorRefId) ?? null;
+        }
+
+        const scheduleItemResult = run(
+          `INSERT INTO project_schedule_items
+           (project_activity_id, template_item_id, kind, name, anchor_type, anchor_ref_id,
+            offset_days, project_milestone_id, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          [
+            projectActivityId,
+            item.id,
+            item.kind,
+            item.name,
+            item.anchor_type,
+            anchorRefId,
+            item.offset_days,
+            projectMilestoneId,
+          ]
+        );
+
+        templateItemIdToProjectItemId.set(item.id, scheduleItemResult.lastInsertRowid as number);
+      }
+    }
+
+    // Touch project
+    touchProject(projectId);
+
+    return createSuccessResponse({
+      milestonesCreated,
+      activitiesCreated,
+      scheduleItemsLinked,
+      errors,
+    });
+  } catch (error) {
+    console.error('Error applying template to project:', error);
+    return createErrorResponse(String(error));
+  }
+}
+
+// ============================================================================
 // Schedule Items Handlers
 // ============================================================================
 
@@ -4185,6 +4593,18 @@ export function registerHandlers(): void {
   ipcMain.handle('project-milestones:update', handleProjectMilestonesUpdate);
   ipcMain.handle('project-milestones:delete', handleProjectMilestonesDelete);
   ipcMain.handle('project-milestones:bulk-update', handleProjectMilestonesBulkUpdate);
+
+  // Project Templates
+  ipcMain.handle('project-templates:list', handleProjectTemplatesList);
+  ipcMain.handle('project-templates:get', handleProjectTemplatesGet);
+  ipcMain.handle('project-templates:create', handleProjectTemplatesCreate);
+  ipcMain.handle('project-templates:update', handleProjectTemplatesUpdate);
+  ipcMain.handle('project-templates:delete', handleProjectTemplatesDelete);
+  ipcMain.handle('project-templates:add-milestone', handleProjectTemplateAddMilestone);
+  ipcMain.handle('project-templates:delete-milestone', handleProjectTemplateDeleteMilestone);
+  ipcMain.handle('project-templates:add-activity', handleProjectTemplateAddActivity);
+  ipcMain.handle('project-templates:delete-activity', handleProjectTemplateDeleteActivity);
+  ipcMain.handle('project-templates:apply-to-project', handleProjectTemplateApplyToProject);
 
   // Project Activities
   ipcMain.handle('project-activities:list', handleProjectActivitiesList);
